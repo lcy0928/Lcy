@@ -1,14 +1,18 @@
-// Build data/morrisons.json: today's cheapest Morrisons product for a basket of 50
+// Build data/morrisons.json: the cheapest Morrisons product for a basket of 50
 // everyday items, read from the Morrisons online shop's search pages.
 //
-//   node scripts/morrisons-build.mjs <out.json> [--check]
+//   node scripts/morrisons-build.mjs <out.json> [--check] [--prev <url|file>] [--until <ISO time>] [--every <minutes>]
 //
 // Polite by design: honours robots.txt (search pages are allowed, /api/ is not),
-// identifies itself, one page every 3 s, once a day. --check reads the first three
-// items only (used in PR CI).
-// Output: { v, date, items: [[item, name, price, unit price, per ('l'|'kg'|'pc'|''), url]] }
+// identifies itself, waits 10 s between pages and stops at the first block (403/429),
+// keeping what it has. With --until and --every the basket is spread evenly over the
+// runs left before that time (one run every <minutes>): each run checks its share of
+// the items not yet checked that day and keeps the rest from --prev. After --until it
+// only carries --prev over. --check reads one item (used in PR CI).
+// Output: { v, date, items: [[item, name, price, unit price, per ('l'|'kg'|'pc'|''), url, date checked]],
+//           missing: [[item, date checked]] }
 
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { wordsOf } from '../js/prices.js';
@@ -121,30 +125,84 @@ export function pickCheapest(products, item, basket = BASKET) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const searchPath = (item) => `/search?q=${encodeURIComponent(searchWords(item))}`;
 
-if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
-  const [out, flag] = process.argv.slice(2);
-  const check = flag === '--check';
-  const robots = await fetch(`${SITE}/robots.txt`, { headers: { 'User-Agent': UA } }).then((r) => (r.ok ? r.text() : ''));
-  if (!robotsAllows(robots, searchPath('milk'))) throw new Error('robots.txt disallows the search pages');
-  const items = [];
-  const failed = [];
-  const unknown = new Set();
-  const basket = check ? BASKET.slice(0, 3) : BASKET;
-  for (const item of basket) {
-    const res = await fetch(`${SITE}${searchPath(item)}`, { headers: { 'User-Agent': UA, Accept: 'text/html' } });
-    if (res.status === 403 || res.status === 429) throw new Error(`blocked: HTTP ${res.status} on "${item}"`);
-    if (!res.ok) failed.push(`${item}: HTTP ${res.status}`);
-    else {
-      const row = pickCheapest(pageProducts(await res.text(), unknown), item);
-      if (row) items.push(row); else failed.push(`${item}: no match`);
-    }
-    await sleep(3000);
+/**
+ * Which items this run checks: those not checked on `today`, in basket order; with a
+ * deadline, an even share of them for each run left (one every `everyMin` minutes).
+ */
+export function planRun(prev, { today, now = Date.now(), until = Infinity, everyMin = 0, basket = BASKET }) {
+  const checked = new Map((prev?.items || []).map((r) => [r[0], r[6]]));
+  for (const [item, date] of prev?.missing || []) if (!(checked.get(item) >= date)) checked.set(item, date);
+  const todo = basket.filter((i) => checked.get(i) !== today);
+  if (now >= until) return [];
+  if (!everyMin || !Number.isFinite(until)) return todo;
+  const runsLeft = Math.max(1, Math.ceil((until - now) / (everyMin * 60000)));
+  return todo.slice(0, Math.ceil(todo.length / runsLeft));
+}
+
+/** New results over the previous file, in basket order. */
+export function mergeRows(prev, rows, missing, basket = BASKET) {
+  const items = new Map((prev?.items || []).map((r) => [r[0], r]));
+  const miss = new Map((prev?.missing || []).map((r) => [r[0], r]));
+  for (const r of rows) { items.set(r[0], r); miss.delete(r[0]); }
+  for (const r of missing) miss.set(r[0], r); // an older price stays, marked as not found since
+  const order = (a, b) => basket.indexOf(a[0]) - basket.indexOf(b[0]);
+  const all = [...items.values()].sort(order);
+  return {
+    v: 1,
+    date: all.reduce((d, r) => (r[6] > d ? r[6] : d), ''),
+    items: all,
+    missing: [...miss.values()].sort(order),
+  };
+}
+
+async function loadPrev(src) {
+  if (!src) return null;
+  try {
+    if (!/^https?:/.test(src)) return JSON.parse(readFileSync(src, 'utf8'));
+    const res = await fetch(src, { headers: { 'User-Agent': UA }, cache: 'no-store' });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
   }
-  for (const it of items) console.log(`${it[0]} → £${it[2]} ${it[1]}${it[4] ? ` (£${it[3]}/${it[4]})` : ''} ${it[5]}`);
-  if (failed.length) console.log(`not found: ${failed.join('; ')}`);
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+  const args = process.argv.slice(2);
+  const out = args[0];
+  const opt = (name) => { const i = args.indexOf(name); return i > 0 ? args[i + 1] : undefined; };
+  const check = args.includes('--check');
+  const prev = check ? null : await loadPrev(opt('--prev'));
+  const today = new Date().toISOString().slice(0, 10);
+  const until = opt('--until') ? Date.parse(opt('--until')) : Infinity;
+  const plan = check ? BASKET.slice(0, 1) : planRun(prev, { today, until, everyMin: Number(opt('--every')) || 0 });
+  console.log(`${prev?.items?.length || 0} items from before; checking ${plan.length}: ${plan.join(', ') || '(none)'}`);
+  const rows = [];
+  const missing = [];
+  let blocked = '';
+  const unknown = new Set();
+  if (plan.length) {
+    const robots = await fetch(`${SITE}/robots.txt`, { headers: { 'User-Agent': UA } }).then((r) => (r.ok ? r.text() : ''));
+    if (!robotsAllows(robots, searchPath('milk'))) throw new Error('robots.txt disallows the search pages');
+  }
+  for (const [i, item] of plan.entries()) {
+    if (i) await sleep(10000);
+    const res = await fetch(`${SITE}${searchPath(item)}`, { headers: { 'User-Agent': UA, Accept: 'text/html' } });
+    if (res.status === 403 || res.status === 429) { blocked = `HTTP ${res.status} on "${item}"`; break; }
+    if (!res.ok) { console.log(`${item}: HTTP ${res.status}`); continue; }
+    const row = pickCheapest(pageProducts(await res.text(), unknown), item);
+    if (row) rows.push([...row, today]); else missing.push([item, today]);
+  }
+  for (const it of rows) console.log(`${it[0]} → £${it[2]} ${it[1]}${it[4] ? ` (£${it[3]}/${it[4]})` : ''} ${it[5]}`);
+  if (missing.length) console.log(`no match: ${missing.map((m) => m[0]).join(', ')}`);
   if (unknown.size) console.log(`unknown unit labels: ${[...unknown].join(', ')}`);
-  if (!items.length || (!check && items.length < basket.length / 2)) throw new Error(`only ${items.length} items`);
-  mkdirSync(dirname(out), { recursive: true });
-  writeFileSync(out, JSON.stringify({ v: 1, date: new Date().toISOString().slice(0, 10), items }));
-  console.log(`${items.length}/${basket.length} items → ${out}`);
+  const data = mergeRows(prev, rows, missing);
+  if (data.items.length) {
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(out, JSON.stringify(data));
+  }
+  const done = planRun(data, { today }).length;
+  console.log(`${data.items.length} items in ${out} (${BASKET.length - done}/${BASKET.length} checked today)`);
+  // Stop for today; the next run (or tomorrow's) carries on. Fail the step so it shows.
+  if (blocked) throw new Error(`blocked: ${blocked}; kept what was checked`);
+  if (!data.items.length) throw new Error('no prices');
 }
