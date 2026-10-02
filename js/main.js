@@ -14,7 +14,7 @@ import { startScan, scanFile } from './scan.js';
 import { readPrices } from './ocr.js';
 import { expandOpw, searchOpw, opwQuotes, opwUpdates, productName, opwProductUrl, storeName } from './opw.js';
 import { APP_VERSION } from './version.js';
-import { SITE_OPW, SITE_MARKET, SITE_BRAND, opwBest, marketBest, openProductsUrl, openPricesUrl, parseOpenPrices, openBest, onsMatch, loggedBest } from './prices.js';
+import { SITE_OPW, SITE_MARKET, SITE_BRAND, opwBest, marketBest, openProductsUrl, openPricesUrl, parseOpenPrices, openBest, onsMatch, basketMatch, loggedBest } from './prices.js';
 import { MARKETS, STORE_COUNTRY, expandMarket, searchMarket, marketUpdates, productLink, storeName as marketStore } from './market.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -533,6 +533,8 @@ function marketPanel(m) {
 const opLive = { term: '', state: '', list: [] };
 let ons = null; // UK typical prices from ONS, data/ons.json
 let onsState = '';
+let sb = null; // Sainsbury's daily basket, data/sainsburys.json
+let sbState = '';
 
 const ukGroceryWanted = () => {
   const s = state.search;
@@ -548,6 +550,13 @@ function ensureUkPrices() {
     getJson('data/ons.json')
       .then((d) => { ons = d; onsState = 'ok'; })
       .catch(() => { onsState = 'fail'; })
+      .finally(refreshSearch);
+  }
+  if (!sbState) {
+    sbState = 'loading';
+    getJson('data/sainsburys.json')
+      .then((d) => { sb = d; sbState = 'ok'; })
+      .catch(() => { sbState = 'fail'; })
       .finally(refreshSearch);
   }
   // Wait for the English words before asking Open Prices.
@@ -620,6 +629,17 @@ function dataPrice(site, pc) {
       price: p.price, cur: 'EUR', name: p.name, url: p.url, src: MARKETS[m].source, date: inFresh ? db.date : st?.lastChange,
       stale: !inFresh, storeStale: !inFresh, unit: p.pu && p.pu.per !== 'pc' ? `${fmt(p.pu.value, 'EUR', lang)}/${t('mkt.per.' + p.pu.per)}` : '',
     };
+  }
+  if (site.id === 'sainsburys' && ukGroceryWanted()) {
+    // Today's cheapest of the daily basket item; other searches fall back to Open Prices.
+    if (sbState === 'loading') return 'loading';
+    const x = basketMatch(sb, termFor('en'));
+    if (x) {
+      return {
+        price: x.price, cur: 'GBP', name: x.name, url: x.url, src: "Sainsbury's", date: sb.date,
+        stale: ageDays(sb.date) > 3, unit: x.per ? `${fmt(x.unit, 'GBP', lang)}/${t('mkt.per.' + x.per)}` : '',
+      };
+    }
   }
   if (SITE_BRAND[site.id] && ukGroceryWanted()) {
     if (opLive.state === 'loading' || !opLive.state) return 'loading';

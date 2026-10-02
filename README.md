@@ -10,7 +10,7 @@ A personal price-comparison web app (PWA) for shopping across Hong Kong, the UK 
 - **自動翻譯關鍵字**：中文或者英文都得，每個網站會用佢嘅語言搜尋（香港網站用中文、英國用英文、德法荷意網站用當地語言）。內置約 450 個香港常用購物詞（士多啤梨、雪櫃、叉電線、冷衫、白色 T恤……），其他中文詞用 Google 翻譯當廣東話理解，Google 用唔到就改用 MyMemory；品牌同型號唔會翻譯。譯得唔啱可以撳個翻譯改字，App 會記住（設定 →「我改過嘅翻譯」），並經 Gist 同步。
 - **消委會超市價**：每日自動下載消委會「網上價格一覽通」開放數據，搜超市貨品即刻見到各超市價錢同優惠；加入心水之後每日自動更新價錢。
 - **歐洲超市最新最平**：揀「超市」再勾「歐洲」，搜尋時自動列出荷蘭（checkjebon.nl）同奧地利（Heisse Preise）超市嘅最新價錢，按每公升／每公斤價由平到貴排。每日自動檢查邊間超市仲有更新：已經停咗更新嘅超市會另外列喺「可能過時」，註明最後更新日期，唔會當最平。喺度記價之後，價錢每日自動跟住更新。
-- **每個網站旁邊顯示現時價**：超市類搜尋時，喺各網站下面顯示嗰間店最平一件貨品同價錢：香港用消委會（百佳、惠康、屈臣氏、萬寧、士多），荷蘭／奧地利用超市開放數據，英國用 Open Prices（Open Food Facts 眾包店舖價，即時讀取）；英國區頂另顯示 ONS 全國一般價（每月）。你自己記過嘅價亦會顯示。過時嘅價會標「可能過時」，冇數據嘅網站顯示「未有價」。
+- **每個網站旁邊顯示現時價**：超市類搜尋時，喺各網站下面顯示嗰間店最平一件貨品同價錢：香港用消委會（百佳、惠康、屈臣氏、萬寧、士多），荷蘭／奧地利用超市開放數據，英國 Sainsbury's 用佢官方產品搜尋，每日預先查 50 款常用貨（牛奶、橙汁、雞蛋等）最平一件，其他英國超市用 Open Prices（Open Food Facts 眾包店舖價，即時讀取）；英國區頂另顯示 ONS 全國一般價（每月）。你自己記過嘅價亦會顯示。過時嘅價會標「可能過時」；冇價嘅網站唔顯示價錢，地區標題會寫幾多個網站有價。
 - **英國超市一次比晒**：Trolley.co.uk（比較十幾間英國超市）排喺英國第一位；香港就係消委會。
 - **到手價計算**：
   - VAT：海外網購寄香港可以扣除 VAT；寄去集運倉就照收 VAT，集運費按重量計。
@@ -51,7 +51,7 @@ npm test    # 單元測試（Node 22+）
 | `js/sites.js` | 預設網站同搜尋網址模板 |
 | `js/landed.js` | 到手價計算：VAT、退稅門檻、信用卡、集運、單位價 |
 | `js/opw.js`, `scripts/opw-build.mjs` | 消委會開放數據（每日由 GitHub Actions 下載） |
-| `js/prices.js`, `scripts/ons-build.mjs` | 網站旁邊嘅現時價（消委會、歐洲超市、Open Prices、ONS、你記錄嘅價） |
+| `js/prices.js`, `scripts/ons-build.mjs`, `scripts/sainsburys-build.mjs` | 網站旁邊嘅現時價（消委會、歐洲超市、Sainsbury's 每日 50 款、Open Prices、ONS、你記錄嘅價） |
 | `js/market.js`, `scripts/market-build.mjs` | 荷蘭、奧地利超市開放數據同更新檢查（每日由 GitHub Actions 下載） |
 | `js/detect.js` | 由連結認出網站 |
 | `js/translate.js`, `js/glossary.js` | 關鍵字翻譯（你改過嘅字 → 香港購物詞庫 → Google 粵語翻譯 → MyMemory） |
@@ -62,7 +62,7 @@ npm test    # 單元測試（Node 22+）
 | `js/store.js` | 本機資料 |
 | `js/main.js` | 介面 |
 
-推送到 `main` 會由 `.github/workflows/pages.yml` 自動測試同部署；佢亦會每日（香港時間 10:23）自動跑一次，更新消委會、荷蘭同奧地利超市數據。公開 repo 如果 60 日冇任何更新，GitHub 會暫停排程，要喺 Actions 頁撳 Enable 重新開。
+推送到 `main` 會由 `.github/workflows/pages.yml` 自動測試同部署；佢亦會每日（香港時間 10:23）自動跑一次，更新消委會、荷蘭、奧地利超市、ONS 同 Sainsbury's 數據。Sainsbury's 嗰步會先睇 robots.txt、表明身份、每 1.5 秒先查一款；如果被擋，嗰步會失敗但唔影響部署。公開 repo 如果 60 日冇任何更新，GitHub 會暫停排程，要喺 Actions 頁撳 Enable 重新開。
 
 ## 注意
 
