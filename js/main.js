@@ -2,11 +2,16 @@ import { t, setLang, getLang } from './i18n.js';
 import * as S from './store.js';
 import { state } from './store.js';
 import { CATS, PRODUCT_CATS, REGIONS, KINDS, REGION_CURRENCY, buildUrl } from './sites.js';
-import { CURRENCIES, convert, effectiveRates, fetchRates, fmt, fmtParts } from './currency.js';
-import { landed, latestPerSite, rankQuotes, COUNTRIES, REGION_COUNTRY, MODES } from './landed.js';
+import { CURRENCIES, convert, effectiveRates, fetchRates, fetchRatesOn, fxSnapshot, ratesAt, fmt, fmtParts } from './currency.js';
+import { landed, latestPerSite, rankQuotes, COUNTRIES, REGION_COUNTRY, MODES, DEFAULT_CARD, isOverseas, UNITS, unitPrice, ageDays } from './landed.js';
 import { syncGist, mergeData } from './sync.js';
 import { buildChart, bindChart } from './chart.js';
 import { esc, num, uid, localDate, addDays, safeUrl } from './util.js';
+import { detectFromUrl, extractUrl, nameFromUrl } from './detect.js';
+import { alertsFor } from './alerts.js';
+import { startScan, scanFile } from './scan.js';
+import { readPrices } from './ocr.js';
+import { expandOpw, searchOpw, opwQuotes, opwUpdates, productName, opwProductUrl, storeName } from './opw.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -14,16 +19,18 @@ const main = $('#main');
 const dlg = $('#dlg');
 
 // View-only UI state (not persisted)
-const ui = { listCat: 'all', showAll: false, siteCat: 'all', conv: { amt: '100', cur: 'GBP' }, chart: null, dialog: null };
+const ui = { testCat: 'all', listCat: 'all', showAll: false, sortUnit: false, siteCat: 'all', conv: { amt: '100', cur: 'GBP' }, chart: null, dialog: null };
 let installPrompt = null;
+let opw = null; // Consumer Council data, loaded from data/opw.json
 
 const ctx = () => ({
   base: state.settings.base,
   cardCurrency: state.settings.cardCurrency,
-  cardFeePct: state.settings.cardFeePct,
+  cards: state.settings.cards,
   rates: effectiveRates(state.rates, state.settings.manualRates),
 });
 const money = (v, cur = state.settings.base) => fmt(v, cur, getLang());
+const cardName = (c) => c?.name || t('card.default');
 const locale = () => (getLang() === 'zh' ? 'zh-HK' : 'en-GB');
 
 function fmtDate(iso) {
@@ -61,6 +68,8 @@ function route() {
 const ICONS = {
   search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>',
   list: '<path d="M3.5 12.5V4.5a1 1 0 0 1 1-1h8l8 8-9 9z"/><circle cx="8" cy="8" r="1.6"/>',
+  camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+  barcode: '<path d="M4 6v12M7 6v12M10 6v12M14 6v12M16 6v12M20 6v12"/><path d="M2 4h3M19 4h3M2 20h3M19 20h3"/>',
   calc: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8.5 7.5h7M8.5 12h1M14.5 12h1M8.5 16h1M14.5 16h1"/>',
   settings: '<path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17" r="2"/>',
 };
@@ -72,7 +81,10 @@ function renderChrome(active) {
   $('#lang-toggle').setAttribute('aria-label', getLang() === 'zh' ? 'Switch to English' : '切換到中文');
   const tabs = [['search', 'search'], ['list', 'list'], ['calc', 'calc'], ['settings', 'settings']];
   $('#nav').innerHTML = tabs
-    .map(([r, k]) => `<a href="#/${r}" class="tab${active === r || (active === 'item' && r === 'list') ? ' active' : ''}"${active === r ? ' aria-current="page"' : ''}>${icon(k)}<span>${t('tab.' + r)}</span></a>`)
+    .map(([r, k]) => {
+      const due = r === 'list' ? dueItems().length : 0;
+      return `<a href="#/${r}" class="tab${active === r || (active === 'item' && r === 'list') ? ' active' : ''}"${active === r ? ' aria-current="page"' : ''}>${icon(k)}<span>${t('tab.' + r)}</span>${due ? `<span class="tab-badge" aria-label="${esc(t('due.title'))}">${due}</span>` : ''}</a>`;
+    })
     .join('');
   document.title = `${t('app')} · ${t('tab.' + (active === 'item' ? 'list' : active))}`;
 }
@@ -82,11 +94,11 @@ function render() {
   setLang(state.settings.lang);
   document.documentElement.lang = locale();
   ui.chart = null;
-  const views = { search: viewSearch, list: viewList, item: () => viewItem(r.arg), calc: viewCalc, settings: viewSettings };
+  const views = { search: viewSearch, list: viewList, item: () => viewItem(r.arg), calc: viewCalc, settings: viewSettings, linktest: viewLinkTest };
   const view = views[r.name] || viewSearch;
   main.innerHTML = view();
   main.dataset.view = r.name;
-  renderChrome(views[r.name] ? r.name : 'search');
+  renderChrome(r.name === 'linktest' ? 'settings' : views[r.name] ? r.name : 'search');
   afterRender();
 }
 
@@ -139,7 +151,8 @@ function searchFields() {
       ${field(t('search.adults'), inp('adults', 'number', 'min="1" max="16" inputmode="numeric"'))}
     </div>`;
   }
-  return field(t('search.keyword'), inp('q', 'search', `placeholder="${esc(t('search.keywordPh'))}" enterkeyhint="search" autocomplete="off"`), 'field-big');
+  return field(t('search.keyword'), `<div class="kw-row">${inp('q', 'search', `placeholder="${esc(t('search.keywordPh'))}" enterkeyhint="search" autocomplete="off"`)}
+    <button type="button" class="btn scan-btn" data-act="scan" aria-label="${esc(t('scan.button'))}" title="${esc(t('scan.button'))}">${icon('barcode')}</button></div>`, 'field-big');
 }
 
 function viewSearch() {
@@ -156,7 +169,10 @@ function viewSearch() {
       <div class="chips small">${REGIONS.map((r) => chip('region', r, t('region.' + r), s.regions.includes(r), 'checkbox')).join('')}</div></div>
     ${hasUsed(s.cat) ? `<div class="filter-row"><span class="field-label">${t('search.cond')}</span>
       <div class="chips small" role="radiogroup">${['all', 'new', 'used'].map((c) => chip('cond', c, t('cond.' + c), s.cond === c)).join('')}</div></div>` : ''}
-    <div class="form-foot"><button type="button" class="btn" data-act="track">${t('search.track')}</button></div>
+    <div class="form-foot">
+      <button type="button" class="btn quiet" data-act="paste-log">${t('search.pasteLog')}</button>
+      <button type="button" class="btn" data-act="track">${t('search.track')}</button>
+    </div>
   </form>
   <div id="results" aria-live="polite">${searchResults()}</div>`;
 }
@@ -181,11 +197,67 @@ function searchResults() {
   const groups = REGIONS.filter((r) => s.regions.includes(r))
     .map((r) => [r, sites.filter((x) => x.region === r)])
     .filter(([, l]) => l.length);
-  return `<p class="hint">${t('search.hint')}</p>${groups.map(([r, list]) => `
+  return `${opwPanel()}<p class="hint">${t('search.hint')}</p>${groups.map(([r, list]) => `
     <section class="region">
       <h2 class="region-h"><span>${t('region.' + r)}</span><small>${t('search.count', { n: list.length })}</small></h2>
       <ul class="sites">${list.map((site) => siteRow(site, params)).join('')}</ul>
     </section>`).join('')}`;
+}
+
+function opwPanel() {
+  const s = state.search;
+  if (s.cat !== 'grocery' || !opw || !s.q.trim() || !s.regions.includes('HK')) return '';
+  const lang = getLang();
+  const hits = searchOpw(opw, s.q, 8);
+  const rows = hits.map((p) => {
+    const cheapest = p.prices[0];
+    const table = p.prices.map((x) => {
+      const offer = p.offers.filter((o) => o.store === x.store).map((o) => (lang === 'en' ? o.en : o.zh)).join('; ');
+      return `<tr><th>${esc(storeName(x.store))}${offer ? `<span class="opw-offer">${esc(offer)}</span>` : ''}</th><td>${esc(fmt(x.price, 'HKD', lang))}</td></tr>`;
+    }).join('');
+    return `<li class="opw-item">
+      <div class="opw-head">
+        <div class="opw-name">${esc(productName(p, lang))}</div>
+        <div class="opw-best"><span class="mini-tag">${esc(fmt(cheapest.price, 'HKD', lang))}</span><span class="meta">${esc(storeName(cheapest.store))}</span></div>
+      </div>
+      <details class="q-details"><summary>${t('opw.stores', { n: p.prices.length })}</summary><table class="breakdown">${table}</table></details>
+      <div class="opw-actions">
+        <button type="button" class="btn small" data-act="opw-track" data-code="${esc(p.code)}">${t('search.track')}</button>
+        <a class="btn small quiet" href="${esc(opwProductUrl(p.code))}" target="_blank" rel="noopener noreferrer">${t('opw.page')} ↗</a>
+      </div>
+    </li>`;
+  }).join('');
+  return `<section class="card opw">
+    <h2 class="section-h">${t('opw.title')} <small>${esc(t('opw.updated', { date: fmtDate(opw.date) }))}</small></h2>
+    ${hits.length ? `<ul class="opw-list">${rows}</ul>` : `<p class="muted small">${esc(t('opw.none', { q: s.q.trim() }))}</p>`}
+    <p class="muted small">${t('opw.note')}</p>
+  </section>`;
+}
+
+// Keep tracked Consumer Council items in step with today's data.
+function applyOpwUpdates() {
+  if (!opw) return;
+  for (const item of S.liveItems()) {
+    if (!item.opw || item.opwDate === opw.date) continue;
+    const p = opw.byCode.get(item.opw);
+    if (!p) continue;
+    const { add, seen } = opwUpdates(item, p, opw.date, getLang());
+    S.applyQuoteUpdates(item.id, add, seen, opw.date, { opwDate: opw.date });
+  }
+}
+
+async function loadOpw() {
+  try {
+    const res = await fetch('data/opw.json', { cache: 'no-cache' });
+    if (!res.ok) return;
+    opw = expandOpw(await res.json());
+    applyOpwUpdates();
+    const r = route().name;
+    if (r === 'search' && state.search.cat === 'grocery' && $('#results')) $('#results').innerHTML = searchResults();
+    else if (r === 'item' || r === 'list') softRender();
+  } catch {
+    /* offline or not deployed yet: the panel just stays hidden */
+  }
 }
 
 function siteRow(site, params) {
@@ -199,6 +271,8 @@ function siteRow(site, params) {
     <div class="site-main">
       <span class="site-name">${esc(site.name)}</span>
       <span class="badge kind-${esc(site.kind)}">${t('kind.' + site.kind)}</span>
+      ${site.via === 'google' ? `<span class="badge">${t('site.viaGoogle')}</span>` : ''}
+      ${site.check === 'bad' ? `<span class="badge warn-badge">${t('test.badBadge')}</span>` : ''}
       ${missing.length ? `<span class="site-need">${t('search.need', { fields: need })}</span>` : ''}
     </div>
     <div class="site-actions">${open}<button type="button" class="btn small quiet" data-act="log-from-search" data-site="${esc(site.id)}">${t('search.log')}</button></div>
@@ -226,6 +300,33 @@ function bestOf(item, c) {
   return { best: ranked[0], second: ranked[1] };
 }
 const targetBase = (item, c) => (num(item.target) > 0 ? convert(num(item.target), item.targetCur || c.base, c.base, c.rates) : NaN);
+
+// Items whose newest price is older than the "old price" setting (or that have none).
+function dueItems() {
+  const limit = num(state.settings.staleDays, 7);
+  return S.liveItems()
+    .map((item) => {
+      const qs = S.liveQuotes(item);
+      const age = qs.length ? Math.min(...qs.map((q) => ageDays(seenDate(q)))) : Infinity;
+      return { item, age };
+    })
+    .filter(({ age }) => age > limit)
+    .sort((a, b) => b.age - a.age);
+}
+
+function dueSection() {
+  const due = dueItems();
+  if (!due.length) return '';
+  return `<section class="card due">
+    <h2 class="section-h">${t('due.title')} <small>${due.length}</small></h2>
+    <p class="muted small">${t('due.hint', { n: state.settings.staleDays ?? 7 })}</p>
+    <ul class="due-list">${due.slice(0, 6).map(({ item, age }) => `<li>
+      <a href="#/item/${encodeURIComponent(item.id)}" class="due-name">${esc(item.name)}</a>
+      <span class="meta">${Number.isFinite(age) ? esc(t('age.days', { n: age })) : t('list.noQuote')}</span>
+      <button type="button" class="btn small" data-act="item-research" data-item="${esc(item.id)}">${t('due.go')}</button>
+    </li>`).join('')}</ul>
+  </section>`;
+}
 
 function viewList() {
   const c = ctx();
@@ -255,6 +356,7 @@ function viewList() {
     <h1>${t('list.title')}</h1>
     <button type="button" class="btn primary" data-act="item-add">+ ${t('list.add')}</button>
   </header>
+  ${dueSection()}
   ${cats.length > 1 ? `<div class="chips small">${chip('listCat', 'all', t('list.allCats'), ui.listCat === 'all')}${cats.map((k) => chip('listCat', k, t('cat.' + k), ui.listCat === k)).join('')}</div>` : ''}
   ${items.length ? `<ul class="items">${cards.join('')}</ul>` : `<p class="empty">${t('list.empty')}</p>`}`;
 }
@@ -270,6 +372,7 @@ function priceTag(best, item, c, second) {
       : `<span>${t('item.aboveTarget', { amt: esc(money(best.r.total - target)) })}</span>`);
   }
   if (second) notes.push(`<span>${t('item.cheaperBy', { amt: esc(money(second.r.total - best.r.total)) })}</span>`);
+  if (isStale(best.q)) notes.push(`<span class="warn-text">${t('item.staleBest', { n: ageDays(seenDate(best.q)) })}</span>`);
   return `<div class="tag-wrap">
     <div class="price-tag">
       <span class="tag-label">${t('list.best')}</span>
@@ -281,8 +384,29 @@ function priceTag(best, item, c, second) {
 }
 
 function breakdown(r, withTotal = true) {
-  return `<table class="breakdown">${r.lines.map((l) => `<tr><th>${t('line.' + l.k, { pct: l.pct })}</th><td>${esc(fmt(l.v, l.cur, getLang()))}</td></tr>`).join('')}
+  return `<table class="breakdown">${r.lines.map((l) => `<tr${l.k === 'belowMin' ? ' class="warn"' : ''}><th>${esc(t('line.' + l.k, { pct: l.pct, card: l.card || t('card.default'), min: l.min ? fmt(l.min, l.cur, getLang()) : '' }))}</th><td>${l.k === 'belowMin' ? '' : esc(fmt(l.v, l.cur, getLang()))}</td></tr>`).join('')}
     ${withTotal ? `<tr class="total"><th>${t('line.total')}</th><td>${esc(money(r.total))}</td></tr>` : ''}</table>`;
+}
+
+const seenDate = (q) => (q.seenAt && q.seenAt > (q.date || '') ? q.seenAt : q.date);
+
+function ageLabel(date) {
+  const n = ageDays(date);
+  if (!Number.isFinite(n) || n < 0) return '';
+  return n === 0 ? t('age.today') : t('age.days', { n });
+}
+const isStale = (q) => ageDays(seenDate(q)) > num(state.settings.staleDays, 7);
+
+function unitLabel(q, total) {
+  const u = unitPrice(total, q.qty, q.unit);
+  return u ? `${t('unit.per.' + u.per)} ${money(u.value)}` : '';
+}
+
+function fxNote(q) {
+  if (!q.fx?.hkdPer) return '';
+  const sig = (v) => new Intl.NumberFormat(locale(), { maximumSignificantDigits: 5 }).format(v);
+  const parts = Object.entries(q.fx.hkdPer).map(([c, v]) => `1 ${c} = ${sig(v)} HKD`);
+  return `<p class="fx-note">${esc(t('fx.logged', { rates: parts.join(' · '), date: fmtDate(q.fx.date) }))}</p>`;
 }
 
 function quoteRow({ q, r }, i, { scratch = false, itemId = '', cheapest = NaN } = {}) {
@@ -290,18 +414,23 @@ function quoteRow({ q, r }, i, { scratch = false, itemId = '', cheapest = NaN } 
   const mode = q.mode && q.mode !== 'local' ? ` · ${t('modeShort.' + q.mode)}` : '';
   const diff = scratch && i > 0 && Number.isFinite(cheapest) ? `<span class="q-diff">${t('calc.more', { amt: esc(money(r.total - cheapest)) })}</span>` : '';
   const ids = `data-id="${esc(q.id)}" data-item="${esc(itemId)}"${scratch ? ' data-scratch="1"' : ''}`;
-  return `<li class="quote${i === 0 ? ' is-best' : ''}">
+  const stale = !scratch && isStale(q);
+  const unit = unitLabel(q, r.total);
+  return `<li class="quote${i === 0 ? ' is-best' : ''}${stale ? ' stale' : ''}">
     <span class="q-rank" aria-hidden="true">${i + 1}</span>
     <div class="q-body">
       <div class="q-top"><span class="q-site">${esc(q.site || '—')}</span>
         ${q.region ? `<span class="badge">${t('region.' + q.region)}</span>` : ''}
-        ${q.cond === 'used' ? `<span class="badge kind-used">${t('cond.used')}</span>` : ''}</div>
-      <div class="q-sub">${esc(fmtDate(q.date))} · ${esc(fmt(num(q.price), q.currency, getLang()))}${mode}${q.note ? ` · ${esc(q.note)}` : ''}</div>
-      <details class="q-details"><summary>${t('item.breakdown')}</summary>${breakdown(r)}</details>
+        ${q.cond === 'used' ? `<span class="badge kind-used">${t('cond.used')}</span>` : ''}
+        ${stale ? `<span class="badge stale-badge">${t('age.stale')}</span>` : ''}</div>
+      <div class="q-sub">${esc(fmtDate(q.date))}${scratch ? '' : ` (${esc(ageLabel(seenDate(q)))})`} · ${esc(fmt(num(q.price), q.currency, getLang()))}${mode}${q.note ? ` · ${esc(q.note)}` : ''}</div>
+      ${unit ? `<div class="q-unit">${esc(unit)}</div>` : ''}
+      <details class="q-details"><summary>${t('item.breakdown')}</summary>${breakdown(r)}${fxNote(q)}</details>
     </div>
     <div class="q-total">${esc(money(r.total))}${i === 0 && scratch ? `<span class="q-best">${t('calc.cheapest')}</span>` : ''}${diff}</div>
     <div class="q-actions">
       ${href ? `<a class="btn small quiet" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${t('item.visit')} ↗</a>` : ''}
+      ${scratch ? '' : `<button type="button" class="btn small" data-act="quote-refresh" ${ids}>${t('quote.refresh')}</button>`}
       <button type="button" class="btn small quiet" data-act="quote-edit" ${ids}>${t('edit')}</button>
       <button type="button" class="btn small quiet danger" data-act="quote-delete" ${ids}>${t('delete')}</button>
     </div>
@@ -314,10 +443,18 @@ function viewItem(id) {
   const c = ctx();
   const quotes = S.liveQuotes(item);
   const { best, second } = bestOf(item, c);
-  const shown = rankQuotes(ui.showAll ? quotes : latestPerSite(quotes), c);
+  let shown = rankQuotes(ui.showAll ? quotes : latestPerSite(quotes), c);
+  const withUnit = shown.filter((x) => unitPrice(x.r.total, x.q.qty, x.q.unit));
+  const unitPers = new Set(withUnit.map((x) => unitPrice(x.r.total, x.q.qty, x.q.unit).per));
+  const canUnit = withUnit.length >= 2 && unitPers.size === 1;
+  if (canUnit && ui.sortUnit) {
+    const uv = (x) => unitPrice(x.r.total, x.q.qty, x.q.unit)?.value ?? Infinity;
+    shown = [...shown].sort((a, b) => uv(a) - uv(b));
+  }
   const target = targetBase(item, c);
 
-  ui.chart = { points: quotes.map((q) => ({ date: q.date, value: landed(q, c).total, site: q.site })), target, base: c.base };
+  // The trend uses each price's own exchange rate; the ranking uses today's.
+  ui.chart = { points: quotes.map((q) => ({ date: q.date, value: landed(q, { ...c, rates: ratesAt(c.rates, q.fx) }).total, site: q.site })), target, base: c.base };
   const distinctDays = new Set(quotes.map((q) => q.date)).size;
 
   return `
@@ -336,14 +473,42 @@ function viewItem(id) {
   </div>
   <section class="card">
     <h2 class="section-h">${t('item.trend')} <small>${t('item.trendSub', { cur: c.base })}</small></h2>
+    ${distinctDays >= 2 ? `<p class="muted small">${t('item.trendFx')}</p>` : ''}
     ${distinctDays >= 2 ? '<div class="chart-wrap"><div class="c-tip" hidden></div></div>' : `<p class="muted">${t('item.trendNeed')}</p>`}
   </section>
+  ${alertSection(item, quotes)}
   <section>
     <div class="section-bar">
       <h2 class="section-h">${t('item.quotes')} <small>${quotes.length}</small></h2>
       ${quotes.length ? `<div class="chips small" role="radiogroup">${chip('showAll', '0', t('item.latest'), !ui.showAll)}${chip('showAll', '1', t('item.all'), ui.showAll)}</div>` : ''}
+      ${canUnit ? `<div class="chips small" role="radiogroup">${chip('sortUnit', '0', t('item.sortTotal'), !ui.sortUnit)}${chip('sortUnit', '1', t('item.sortUnit'), ui.sortUnit)}</div>` : ''}
     </div>
     ${shown.length ? `<ol class="quotes">${shown.map((x, i) => quoteRow(x, i, { itemId: item.id })).join('')}</ol>` : `<p class="empty">${t('item.noQuotes')}</p>`}
+  </section>`;
+}
+
+function alertSection(item, quotes) {
+  if (item.opw) return `<section class="card"><h2 class="section-h">${t('alert.title')}</h2><p class="muted small">${t('alert.opw')}</p></section>`;
+  const list = alertsFor(item.cat);
+  if (!list.length) return '';
+  const params = item.search && item.search.cat === item.cat ? item.search : { q: item.name };
+  const sites = S.getSites({ includeDisabled: true });
+  const rows = list.map((a, i) => {
+    const site = a.site && sites.find((s) => s.id === a.site);
+    const built = site ? buildUrl(site.url, params) : { url: a.url, missing: [] };
+    const href = built.missing.length ? '' : safeUrl(built.url);
+    if (!href) return '';
+    const name = site ? site.name : a.name;
+    const pasteUrl = a.paste && quotes.map((q) => q.url).find((u) => u && a.paste.test(u));
+    const link = pasteUrl
+      ? `<button type="button" class="btn small" data-act="alert-paste" data-href="${esc(href)}" data-copy="${esc(pasteUrl)}">${t('alert.copyOpen')}</button>`
+      : `<a class="btn small" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${t('search.open')} ↗</a>`;
+    return `<li class="alert-row"><div><span class="site-name">${esc(name)}</span><span class="alert-how">${esc(t('how.' + a.how))}</span></div>${link}</li>`;
+  }).join('');
+  return `<section class="card">
+    <h2 class="section-h">${t('alert.title')}</h2>
+    <p class="muted small">${t('alert.intro')}</p>
+    <ul class="alert-list">${rows}</ul>
   </section>`;
 }
 
@@ -369,10 +534,11 @@ function convOut() {
   const amt = num(ui.conv.amt, NaN);
   const from = ui.conv.cur;
   const targets = [...new Set([c.base, 'HKD', 'GBP', 'EUR', 'USD'])].filter((x) => x !== from);
-  const fee = from !== c.cardCurrency ? num(c.cardFeePct) : 0;
-  const withFee = fee && Number.isFinite(amt) ? convert(amt * (1 + fee / 100), from, c.cardCurrency, c.rates) : NaN;
+  const paid = Number.isFinite(amt) && from !== c.cardCurrency
+    ? landed({ price: amt, currency: from, region: 'GLOBAL', mode: 'local' }, { ...c, base: c.cardCurrency })
+    : null;
   return `<ul class="conv-list">${targets.map((x) => `<li><span class="conv-cur">${x}</span><span class="conv-val">${esc(fmt(convert(amt, from, x, c.rates), x, getLang()))}</span></li>`).join('')}</ul>
-    ${Number.isFinite(withFee) ? `<p class="muted">${t('calc.withFee', { pct: fee })}: <b>${esc(fmt(withFee, c.cardCurrency, getLang()))}</b></p>` : ''}`;
+    ${paid ? `<p class="muted">${esc(t('calc.withFee', { card: cardName(paid.card) }))}: <b>${esc(fmt(paid.total, c.cardCurrency, getLang()))}</b></p>` : ''}`;
 }
 
 function viewCalc() {
@@ -412,6 +578,23 @@ function rateRows() {
     <td>${sig(live[c])} HKD</td>
     <td><input type="number" step="any" inputmode="decimal" data-rate="${c}" value="${manual[c] ? esc(manual[c]) : ''}" placeholder="${esc(sig(live[c]))}" aria-label="${c} ${esc(t('set.ratesCustom'))}"></td>
   </tr>`).join('');
+}
+
+function cardRows() {
+  const cards = state.settings.cards;
+  const numIn = (c, k) => `<input type="number" step="0.01" min="0" inputmode="decimal" data-card="${esc(c.id)}" data-k="${k}" value="${esc(c[k] ?? 0)}">`;
+  return cards.map((c) => `<fieldset class="card-set">
+    <div class="card-set-head">
+      <input data-card="${esc(c.id)}" data-k="name" value="${esc(c.name)}" placeholder="${esc(t('card.default'))}" aria-label="${esc(t('card.name'))}">
+      ${cards.length > 1 ? `<button type="button" class="btn small quiet danger" data-act="card-delete" data-card="${esc(c.id)}">${t('delete')}</button>` : ''}
+    </div>
+    <div class="grid-4">
+      ${field(t('card.fcc'), numIn(c, 'fcc'))}
+      ${field(t('card.cbf'), numIn(c, 'cbf'))}
+      ${field(t('card.cashback'), numIn(c, 'cashback'))}
+      ${field(t('card.markup'), numIn(c, 'markup'))}
+    </div>
+  </fieldset>`).join('');
 }
 
 function siteRows() {
@@ -457,10 +640,24 @@ function viewSettings() {
       ${field(t('set.lang'), `<select data-set="lang">${opt('zh', '中文（香港）', st.lang === 'zh')}${opt('en', 'English', st.lang === 'en')}</select>`)}
       ${field(t('set.base'), `<select data-set="base">${curOptions(st.base)}</select>`)}
       ${field(t('set.cardCur'), `<select data-set="cardCurrency">${curOptions(st.cardCurrency)}</select>`)}
-      ${field(t('set.cardFee'), `<input type="number" step="0.01" min="0" inputmode="decimal" data-set="cardFeePct" value="${esc(st.cardFeePct)}">`)}
+      ${field(t('set.staleDays'), `<input type="number" min="1" step="1" inputmode="numeric" data-set="staleDays" value="${esc(st.staleDays ?? 7)}">`)}
     </div>
-    <p class="muted small">${t('set.cardFeeHint')}</p>
     ${installPrompt ? `<button type="button" class="btn" data-act="install">${t('set.install')}</button>` : ''}
+  </section>
+  <section class="card">
+    <div class="section-bar">
+      <h2 class="section-h">${t('card.section')}</h2>
+      <button type="button" class="btn small" data-act="card-add">+ ${t('card.add')}</button>
+    </div>
+    <p class="muted small">${t('card.hint')}</p>
+    ${cardRows()}
+  </section>
+  <section class="card">
+    <h2 class="section-h">${t('set.fwd')} <small>HKD / kg</small></h2>
+    <div class="grid-3 tight">
+      ${['UK', 'EU', 'GLOBAL'].map((r) => field(t('region.' + r), `<input type="number" min="0" step="any" inputmode="decimal" data-fwd="${r}" value="${esc(st.fwdRates?.[r] ?? '')}">`)).join('')}
+    </div>
+    <p class="muted small">${t('set.fwdHint')}</p>
   </section>
   <section class="card">
     <div class="section-bar">
@@ -480,6 +677,7 @@ function viewSettings() {
     <ul class="site-list">${siteRows()}</ul>
     <div class="actions">
       <button type="button" class="btn" data-act="site-add">+ ${t('set.sitesAdd')}</button>
+      <a class="btn" href="#/linktest">${t('test.open')}</a>
       <button type="button" class="btn quiet" data-act="sites-reset">${t('set.sitesReset')}</button>
     </div>
   </section>
@@ -501,6 +699,52 @@ function viewSettings() {
   </section>`;
 }
 
+// ---------- link test ----------
+const TEST_Q = { coffee: 'Comandante C40', home: 'towel', grocery: 'milk', electronics: 'iPad', other: 'Lego' };
+
+function testParams(cat) {
+  const depart = addDays(localDate(), 30);
+  return { q: TEST_Q[cat] || 'coffee', from: 'HKG', to: 'LHR', depart, ret: addDays(depart, 14), city: 'London', checkin: depart, checkout: addDays(depart, 2), adults: 2 };
+}
+
+function testSites() {
+  return S.getSites({ includeDisabled: true }).filter((s) => ui.testCat === 'all' || s.cats.includes(ui.testCat));
+}
+
+function viewLinkTest() {
+  const sites = testSites();
+  const done = sites.filter((s) => s.check).length;
+  const bad = sites.filter((s) => s.check === 'bad').length;
+  const rows = sites.map((s) => {
+    const cat = ui.testCat === 'all' ? s.cats[0] : ui.testCat;
+    const href = safeUrl(buildUrl(s.url, testParams(cat)).url);
+    return `<li class="test-row${s.check ? ' is-' + s.check : ''}">
+      <div class="test-info">
+        <span class="site-name">${esc(s.name)}</span>
+        <span class="meta">${t('region.' + s.region)} · ${t('cat.' + cat)}${s.via === 'google' ? ` · ${t('site.viaGoogle')}` : ''}</span>
+      </div>
+      <div class="test-actions">
+        ${href ? `<a class="btn small" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${t('search.open')} ↗</a>` : ''}
+        <button type="button" class="btn small${s.check === 'ok' ? ' on-ok' : ''}" data-act="test-mark" data-site="${esc(s.id)}" data-v="ok" aria-pressed="${s.check === 'ok'}" aria-label="${esc(t('test.ok'))}">✓</button>
+        <button type="button" class="btn small${s.check === 'bad' ? ' on-bad' : ''}" data-act="test-mark" data-site="${esc(s.id)}" data-v="bad" aria-pressed="${s.check === 'bad'}" aria-label="${esc(t('test.bad'))}">✗</button>
+      </div>
+    </li>`;
+  }).join('');
+  return `
+  <a class="back" href="#/settings">← ${t('tab.settings')}</a>
+  <header class="page-head"><h1>${t('test.title')}</h1></header>
+  <p class="muted">${t('test.intro')}</p>
+  <div class="section-bar">
+    <select data-ui="testCat" aria-label="${esc(t('itemDlg.cat'))}">${opt('all', t('list.allCats'), ui.testCat === 'all')}${CATS.map((c) => opt(c, t('cat.' + c), ui.testCat === c)).join('')}</select>
+    <span class="meta">${esc(t('test.progress', { done, total: sites.length, bad }))}</span>
+  </div>
+  <ul class="test-list">${rows}</ul>
+  <div class="actions">
+    <button type="button" class="btn primary" data-act="test-copy"${bad ? '' : ' disabled'}>${t('test.copy')}</button>
+    <button type="button" class="btn quiet" data-act="test-clear">${t('test.clear')}</button>
+  </div>`;
+}
+
 // ---------- dialogs ----------
 function openDialog(html, state) {
   ui.dialog = state;
@@ -515,6 +759,7 @@ function closeDialog() {
 }
 
 dlg.addEventListener('close', () => {
+  ui.dialog?.cleanup?.();
   document.body.appendChild($('#toast'));
   ui.dialog = null;
   dlg.innerHTML = '';
@@ -530,21 +775,26 @@ function defaultQuote(preset = {}) {
   return {
     site: '', region, cond: 'new', price: '', currency: REGION_CURRENCY[region], mode, country,
     removeVat: mode === 'online' && (region === 'UK' || region === 'EU'),
-    vatRate: cp.vat, refundPct: cp.refund, shipping: '', fees: '', fwd: '', fwdCur: state.settings.cardCurrency,
-    dutyPct: '', cardFeePct: '', url: '', date: localDate(), note: '',
+    vatRate: cp.vat, refundPct: cp.refund, shipping: '', fees: '', fwd: '',
+    dutyPct: '', cardId: '', url: '', date: localDate(), note: '',
+    shipTo: 'hk', weight: '', fwdRate: state.settings.fwdRates?.[region] ?? '', fwdCur: 'HKD', qty: '', unit: 'g',
     ...preset,
   };
 }
 
-function quoteFormHtml(q, { needName, itemName, editing }) {
+function quoteFormHtml(q, { needName, itemName, editing, refresh }) {
   const names = S.liveItems().map((i) => `<option value="${esc(i.name)}">`).join('');
   const siteNames = [...new Set(S.getSites({ includeDisabled: true }).map((s) => s.name))].map((n) => `<option value="${esc(n)}">`).join('');
   const countries = Object.keys(COUNTRIES).map((k) => opt(k, k === 'OTHER' ? '—' : k, k === q.country)).join('');
   const numIn = (name, val, extra = '') => `<input type="number" name="${name}" step="any" inputmode="decimal" value="${esc(val)}" ${extra}>`;
-  return `<form method="dialog" class="dlg-form quote-form" data-form="quote" data-mode="${esc(q.mode)}" novalidate>
-    <header class="dlg-head"><h2>${editing ? t('quote.editTitle') : t('quote.title')}</h2>
+  return `<form method="dialog" class="dlg-form quote-form" data-form="quote" data-mode="${esc(q.mode)}" data-ship="${q.shipTo === 'fwd' ? 'fwd' : 'hk'}" novalidate>
+    <header class="dlg-head"><h2>${editing ? t('quote.editTitle') : refresh ? t('quote.refreshTitle') : t('quote.title')}</h2>
       <button type="button" class="icon-btn" data-act="dlg-close" aria-label="${esc(t('close'))}">✕</button></header>
     <div class="dlg-body">
+      <div class="paste-row">
+        <input type="url" name="url" value="${esc(q.url)}" placeholder="${esc(t('quote.urlPh'))}" autocomplete="off" aria-label="${esc(t('quote.url'))}">
+        <button type="button" class="btn small" data-act="paste-link">${t('quote.paste')}</button>
+      </div>
       ${needName ? field(t('quote.item'), `<input name="itemName" list="dl-items" value="${esc(itemName)}" required autocomplete="off"><datalist id="dl-items">${names}</datalist>`) : ''}
       <div class="grid-2">
         ${field(t('quote.site'), `<input name="site" list="dl-sites" value="${esc(q.site)}" autocomplete="off"><datalist id="dl-sites">${siteNames}</datalist>`)}
@@ -555,28 +805,45 @@ function quoteFormHtml(q, { needName, itemName, editing }) {
         ${field(t('quote.currency'), `<select name="currency">${curOptions(q.currency)}</select>`)}
         ${field(t('quote.cond'), `<select name="cond">${opt('new', t('cond.new'), q.cond !== 'used')}${opt('used', t('cond.used'), q.cond === 'used')}</select>`)}
       </div>
+      <div class="ocr-row">
+        <label class="btn small">${icon('camera')} ${t('ocr.button')}<input type="file" accept="image/*" capture="environment" data-act="ocr" hidden></label>
+        <span class="muted small" id="ocr-status" aria-live="polite"></span>
+      </div>
+      <div class="chips small" id="ocr-chips"></div>
+      <div class="qty-row">
+        ${field(t('quote.qty'), numIn('qty', q.qty, 'min="0"'))}
+        ${field(t('quote.unit'), `<select name="unit">${UNITS.map((u) => opt(u, t('unit.' + u), u === (q.unit || 'g'))).join('')}</select>`)}
+      </div>
       ${field(t('quote.mode'), `<select name="mode">${MODES.map((m) => opt(m, t('mode.' + m), m === q.mode)).join('')}</select>`)}
       <div class="only-abroad grid-2">
         ${field(t('quote.country'), `<select name="country">${countries}</select>`)}
         <div class="only-online">${field(t('quote.vat'), numIn('vatRate', q.vatRate, 'min="0"'))}</div>
         <div class="only-taxfree">${field(t('quote.refund'), numIn('refundPct', q.refundPct, 'min="0"'))}</div>
       </div>
-      <label class="check only-online"><input type="checkbox" name="removeVat"${q.removeVat ? ' checked' : ''}> ${t('quote.removeVat')}</label>
+      <div class="only-online">${field(t('quote.shipTo'), `<select name="shipTo">${opt('hk', t('ship.hk'), q.shipTo !== 'fwd')}${opt('fwd', t('ship.fwd'), q.shipTo === 'fwd')}</select>`)}</div>
+      <label class="check only-online only-direct"><input type="checkbox" name="removeVat"${q.removeVat ? ' checked' : ''}> ${t('quote.removeVat')}</label>
+      <div class="only-online only-fwd">
+        <div class="grid-3">
+          ${field(t('quote.weight'), numIn('weight', q.weight, 'min="0" placeholder="1.0"'))}
+          ${field(t('quote.fwdRate'), numIn('fwdRate', q.fwdRate, 'min="0"'))}
+          ${field(t('quote.currency'), `<select name="fwdCur">${curOptions(q.fwdCur || 'HKD')}</select>`)}
+        </div>
+        <p class="muted small">${t('quote.fwdHint')}</p>
+      </div>
       <p class="muted small only-taxfree">${t('quote.refundHint')}</p>
       <div class="grid-2">
         ${field(t('quote.shipping'), numIn('shipping', q.shipping, 'min="0"'))}
         ${field(t('quote.fees'), numIn('fees', q.fees, `min="0" placeholder="${esc(t('quote.feesHint'))}"`))}
       </div>
-      <details class="more"${editing && (q.fwd || q.dutyPct || q.cardFeePct !== '' || q.url || q.note) ? ' open' : ''}>
+      <details class="more"${editing && (q.fwd || q.dutyPct || q.cardId || q.note) ? ' open' : ''}>
         <summary>${t('quote.more')}</summary>
         <div class="grid-2">
           ${field(t('quote.fwd'), numIn('fwd', q.fwd, 'min="0"'))}
-          ${field(t('quote.currency'), `<select name="fwdCur">${curOptions(q.fwdCur || state.settings.cardCurrency)}</select>`)}
           <div class="only-online">${field(`${t('quote.duty')} <span class="muted">· ${t('quote.dutyHint')}</span>`, numIn('dutyPct', q.dutyPct, 'min="0" placeholder="0"'))}</div>
-          ${field(t('quote.cardFee'), numIn('cardFeePct', q.cardFeePct, `min="0" placeholder="${esc(t('quote.cardFeeAuto', { pct: state.settings.cardFeePct }))}"`))}
+          ${field(t('quote.card'), `<select name="cardId">${opt('', t('card.auto'), !q.cardId)}${state.settings.cards.map((c) => opt(c.id, cardName(c), c.id === q.cardId)).join('')}</select>`)}
           ${field(t('quote.date'), `<input type="date" name="date" value="${esc(q.date)}">`)}
-          ${field(t('quote.url'), `<input type="url" name="url" value="${esc(q.url)}" placeholder="https://" autocomplete="off">`)}
         </div>
+        <label class="check"><input type="checkbox" name="overseas"${isOverseas(q) ? ' checked' : ''}> ${t('quote.overseas')}</label>
         ${field(t('quote.note'), `<input name="note" value="${esc(q.note)}" autocomplete="off">`)}
       </details>
       <div class="preview" id="q-preview"></div>
@@ -607,7 +874,14 @@ function readQuoteForm(form) {
     fwd: numOrBlank('fwd'),
     fwdCur: f.fwdCur.value,
     dutyPct: numOrBlank('dutyPct'),
-    cardFeePct: numOrBlank('cardFeePct'),
+    shipTo: f.shipTo.value,
+    weight: numOrBlank('weight'),
+    fwdRate: numOrBlank('fwdRate'),
+    qty: numOrBlank('qty'),
+    unit: f.unit.value,
+    cardId: f.cardId.value,
+    overseas: f.overseas.checked,
+    cardFeePct: '',
     url: f.url.value.trim(),
     date: f.date.value || localDate(),
     note: f.note.value.trim(),
@@ -617,6 +891,7 @@ function readQuoteForm(form) {
 function updateQuotePreview(form) {
   const q = readQuoteForm(form);
   form.dataset.mode = q.mode;
+  form.dataset.ship = q.shipTo;
   const out = $('#q-preview', form);
   if (q.price === '') { out.innerHTML = ''; return; }
   const r = landed(q, ctx());
@@ -626,11 +901,67 @@ function updateQuotePreview(form) {
     ${breakdown(r, false)}`;
 }
 
-function openQuote({ itemId = '', quote = null, preset = {}, scratch = false, itemName = '' }) {
+function openQuote({ itemId = '', quote = null, preset = {}, scratch = false, itemName = '', refresh = false }) {
   const q = quote ? { ...defaultQuote(), ...quote } : defaultQuote(preset);
-  openDialog(quoteFormHtml(q, { needName: !itemId && !scratch, itemName, editing: !!quote }),
+  openDialog(quoteFormHtml(q, { needName: !itemId && !scratch, itemName, editing: !!quote, refresh }),
     { kind: 'quote', itemId, scratch, quoteId: quote?.id || '', cat: preset.cat || '' });
-  updateQuotePreview($('form', dlg));
+  const form = $('form', dlg);
+  updateQuotePreview(form);
+  if (refresh) { form.elements.price.focus(); form.elements.price.select(); }
+}
+
+// A store outside Hong Kong usually means ordering online for delivery here
+// (not for flights or hotels, whose price is the price).
+function applyRegionDefaults(form, region) {
+  const f = form.elements;
+  const cat = ui.dialog?.cat || state.search.cat;
+  if (cat === 'flight' || cat === 'hotel') return;
+  if (region !== 'HK' && f.mode.value === 'local') {
+    f.mode.value = 'online';
+    f.removeVat.checked = region === 'UK' || region === 'EU';
+  } else if (region === 'HK' && f.mode.value === 'online') {
+    f.mode.value = 'local';
+  }
+}
+
+// Fill the quote form from a recognised link. Only empty fields are filled
+// unless `force` is set (an explicit paste).
+function applyDetection(form, det, force = false) {
+  const f = form.elements;
+  if (!det) return;
+  f.url.value = det.url;
+  if (force || !f.site.value.trim()) {
+    f.site.value = det.name;
+    f.region.value = det.region;
+    f.currency.value = det.currency;
+    f.cond.value = det.cond;
+    f.country.value = REGION_COUNTRY[det.region];
+    f.overseas.checked = det.region !== 'HK';
+    applyRegionDefaults(form, det.region);
+    f.country.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  if (f.itemName && !f.itemName.value.trim()) f.itemName.value = nameFromUrl(det.url);
+  toast(t('paste.detected', { site: det.name }));
+  updateQuotePreview(form);
+}
+
+async function readClipboardUrl() {
+  try {
+    return extractUrl(await navigator.clipboard.readText());
+  } catch {
+    return '';
+  }
+}
+
+// Open the quote dialog for a link (from the clipboard, a share, or a paste).
+function openQuoteFromUrl(url) {
+  const det = detectFromUrl(url, S.getSites({ includeDisabled: true }));
+  if (!det) return openQuote({ preset: { cat: state.search.cat } });
+  openQuote({
+    preset: { site: det.name, region: det.region, currency: det.currency, cond: det.cond, url, cat: state.search.cat },
+    itemName: nameFromUrl(url),
+  });
+  toast(t('paste.detected', { site: det.name }));
 }
 
 function saveQuote(form) {
@@ -652,9 +983,52 @@ function saveQuote(form) {
     if (!item.search && cat === state.search.cat) S.updateItem(item.id, { search: searchSnapshot() });
     itemId = item.id;
   }
-  S.upsertQuote(itemId, d.quoteId ? { ...q, id: d.quoteId } : q);
+  const prev = d.quoteId && S.getItem(itemId)?.quotes.find((x) => x.id === d.quoteId);
+  const sameFx = prev?.fx && prev.date === q.date && prev.currency === q.currency && prev.fwdCur === q.fwdCur;
+  const ratesDate = state.rates?.date || localDate();
+  q.fx = sameFx ? prev.fx : fxSnapshot(q, ctx().rates, ratesDate);
+  q.id = d.quoteId || uid();
+  S.upsertQuote(itemId, q);
+  // Back-dated price: swap in that day's exchange rate when we can get it.
+  if (!sameFx && q.fx && q.date < ratesDate && !Object.keys(state.settings.manualRates || {}).some((c) => q.fx.hkdPer[c])) {
+    fetchRatesOn(q.date)
+      .then((r) => {
+        const fx = fxSnapshot(q, r.hkdPer, r.date);
+        if (fx) { S.upsertQuote(itemId, { id: q.id, fx }); softRender(); }
+      })
+      .catch(() => {});
+  }
   toast(t('quote.saved'));
   return true;
+}
+
+function openScanner() {
+  openDialog(`<form method="dialog" class="dlg-form" data-form="scan">
+    <header class="dlg-head"><h2>${t('scan.title')}</h2>
+      <button type="button" class="icon-btn" data-act="dlg-close" aria-label="${esc(t('close'))}">✕</button></header>
+    <div class="dlg-body">
+      <div class="scan-view"><video playsinline muted></video><div class="scan-frame" aria-hidden="true"></div></div>
+      <p class="muted small" id="scan-status" aria-live="polite">${t('scan.loading')}</p>
+      <label class="btn">${t('scan.photo')}<input type="file" accept="image/*" capture="environment" data-act="scan-photo" hidden></label>
+    </div></form>`, { kind: 'scan' });
+  const video = $('video', dlg);
+  video.addEventListener('playing', () => { const s = $('#scan-status'); if (s) s.textContent = t('scan.hint'); }, { once: true });
+  ui.dialog.cleanup = startScan(video, onScanned, (e) => {
+    const s = $('#scan-status');
+    if (s) s.textContent = t('scan.fail', { err: e.message || e.name });
+  });
+}
+
+function onScanned(code) {
+  closeDialog();
+  if (!code) { toast(t('scan.none'), 'bad'); return; }
+  if (/^https?:\/\//.test(code)) { openQuoteFromUrl(code); return; }
+  if (!isProduct(state.search.cat)) state.search.cat = 'other';
+  state.search.q = code;
+  S.save();
+  if (route().name !== 'search') location.hash = '#/search';
+  else render();
+  toast(t('scan.found', { code }));
 }
 
 function openItemDialog(item) {
@@ -802,6 +1176,7 @@ const actions = {
     } else if (group === 'cond') { s.cond = v; S.save(); }
     else if (group === 'listCat') ui.listCat = v;
     else if (group === 'showAll') ui.showAll = v === '1';
+    else if (group === 'sortUnit') ui.sortUnit = v === '1';
     if (group === 'region' || group === 'cond') {
       $$(`.chip[data-group="${group}"]`).forEach((c) => {
         const on = group === 'region' ? s.regions.includes(c.dataset.v) : c.dataset.v === v;
@@ -832,6 +1207,43 @@ const actions = {
     if (!missing.length) preset.url = url;
     openQuote({ preset, itemName: searchItemName() });
   },
+  'opw-track'(el) {
+    const p = opw?.byCode.get(el.dataset.code);
+    if (!p) return;
+    const name = productName(p, getLang());
+    const existing = S.liveItems().find((i) => i.opw === p.code);
+    const item = existing || S.addItem({ name, cat: 'grocery' });
+    S.applyQuoteUpdates(item.id, opwQuotes(p, opw.date, getLang()), [], opw.date, { opw: p.code, opwDate: opw.date });
+    toast(t('search.tracked'));
+    location.hash = `#/item/${encodeURIComponent(item.id)}`;
+  },
+  async 'alert-paste'(el) {
+    try { await navigator.clipboard.writeText(el.dataset.copy); toast(t('alert.copied')); } catch { /* still open the site */ }
+    window.open(el.dataset.href, '_blank', 'noopener');
+  },
+  scan() { openScanner(); },
+  'ocr-pick'(el) {
+    const form = $('form', dlg);
+    form.elements.price.value = el.dataset.v;
+    if (el.dataset.cur) form.elements.currency.value = el.dataset.cur;
+    $$('#ocr-chips .chip').forEach((c) => c.setAttribute('aria-pressed', String(c === el)));
+    updateQuotePreview(form);
+  },
+  'test-mark'(el) {
+    const site = S.getSites({ includeDisabled: true }).find((s) => s.id === el.dataset.site);
+    const v = site?.check === el.dataset.v ? '' : el.dataset.v;
+    S.updateSite(el.dataset.site, { check: v, checkedAt: Date.now() });
+    softRender();
+  },
+  async 'test-copy'() {
+    const bad = S.getSites({ includeDisabled: true }).filter((s) => s.check === 'bad');
+    const text = `${t('test.copyHead')}\n${bad.map((s) => `- ${s.name} (${s.id}): ${s.url}`).join('\n')}`;
+    try { await navigator.clipboard.writeText(text); toast(t('test.copied')); } catch { prompt(t('test.copy'), text); }
+  },
+  'test-clear'() {
+    for (const s of S.getSites({ includeDisabled: true })) if (s.check) S.updateSite(s.id, { check: '' });
+    render();
+  },
   'item-add'() { openItemDialog(null); },
   'item-edit'(el) { openItemDialog(S.getItem(el.dataset.item)); },
   'item-delete'(el) {
@@ -852,6 +1264,28 @@ const actions = {
   'quote-add'(el) {
     const item = S.getItem(el.dataset.item);
     openQuote({ itemId: item.id, preset: { cat: item.cat } });
+  },
+  'quote-refresh'(el) {
+    const { id, item } = el.dataset;
+    const q = S.getItem(item)?.quotes.find((x) => x.id === id);
+    if (!q) return;
+    const { id: _id, createdAt, updatedAt, date, fx, deleted, ...copy } = q;
+    openQuote({ itemId: item, preset: { ...copy, date: localDate() }, refresh: true });
+  },
+  async 'paste-link'() {
+    const form = $('form', dlg);
+    const url = await readClipboardUrl();
+    if (!url) { toast(t('paste.none'), 'bad'); form.elements.url.focus(); return; }
+    applyDetection(form, detectFromUrl(url, S.getSites({ includeDisabled: true })), true);
+  },
+  async 'paste-log'() {
+    const url = await readClipboardUrl();
+    if (url) openQuoteFromUrl(url);
+    else {
+      openQuote({ preset: { cat: state.search.cat }, itemName: searchItemName() });
+      toast(t('paste.none'));
+      $('form', dlg).elements.url.focus();
+    }
   },
   'quote-edit'(el) {
     const { id, item, scratch } = el.dataset;
@@ -885,6 +1319,14 @@ const actions = {
   'dlg-close'() { closeDialog(); },
   'lang-toggle'() { S.setSetting('lang', getLang() === 'zh' ? 'en' : 'zh'); render(); },
   'rates-refresh'() { refreshRates(); },
+  'card-add'() {
+    S.setSetting('cards', [...state.settings.cards, { ...DEFAULT_CARD, id: uid(), name: '' }]);
+    render();
+  },
+  'card-delete'(el) {
+    S.setSetting('cards', state.settings.cards.filter((c) => c.id !== el.dataset.card));
+    render();
+  },
   'site-toggle'(el) { S.updateSite(el.dataset.site, { enabled: el.checked }); $('#results') && ($('#results').innerHTML = searchResults()); },
   'site-edit'(el) { openSiteDialog(S.getSites({ includeDisabled: true }).find((s) => s.id === el.dataset.site)); },
   'site-add'() { openSiteDialog(null); },
@@ -943,6 +1385,27 @@ document.addEventListener('click', (e) => {
 document.addEventListener('change', async (e) => {
   const el = e.target;
   if (el.dataset.act === 'site-toggle') return actions['site-toggle'](el);
+  if (el.dataset.act === 'ocr' && el.files?.[0]) {
+    const status = $('#ocr-status');
+    const chips = $('#ocr-chips');
+    status.textContent = t('ocr.loading');
+    chips.innerHTML = '';
+    try {
+      const found = await readPrices(el.files[0], (p) => { status.textContent = t('ocr.reading', { pct: Math.round(p * 100) }); });
+      status.textContent = found.length ? t('ocr.pick') : t('ocr.none');
+      chips.innerHTML = found.map((c) => `<button type="button" class="chip" data-act="ocr-pick" data-v="${c.value}" data-cur="${esc(c.currency)}">${esc(c.currency ? fmt(c.value, c.currency, getLang()) : String(c.value))}</button>`).join('');
+    } catch (e) {
+      status.textContent = t('ocr.fail', { err: e.message || e.name });
+    }
+    el.value = '';
+    return;
+  }
+  if (el.dataset.act === 'scan-photo' && el.files?.[0]) {
+    const status = $('#scan-status');
+    if (status) status.textContent = t('scan.loading');
+    try { onScanned(await scanFile(el.files[0])); } catch (e) { if (status) status.textContent = t('scan.fail', { err: e.message || e.name }); }
+    return;
+  }
   if (el.dataset.act === 'import' && el.files?.[0]) {
     try {
       const data = JSON.parse(await el.files[0].text());
@@ -960,9 +1423,18 @@ document.addEventListener('change', async (e) => {
   if (el.dataset.set) {
     const key = el.dataset.set;
     if (key === 'sync.auto') { state.sync.auto = el.checked; S.save(); return; }
-    const v = key === 'cardFeePct' ? num(el.value) : el.value;
-    S.setSetting(key, v);
+    S.setSetting(key, key === 'staleDays' ? Math.max(1, Math.round(num(el.value, 7))) : el.value);
     render();
+    return;
+  }
+  if (el.dataset.fwd) {
+    S.setSetting('fwdRates', { ...(state.settings.fwdRates || {}), [el.dataset.fwd]: el.value === '' ? '' : num(el.value) });
+    return;
+  }
+  if (el.dataset.card && el.dataset.k) {
+    const k = el.dataset.k;
+    const cards = state.settings.cards.map((c) => (c.id === el.dataset.card ? { ...c, [k]: k === 'name' ? el.value.trim() : num(el.value) } : c));
+    S.setSetting('cards', cards);
     return;
   }
   if (el.dataset.rate) {
@@ -970,6 +1442,11 @@ document.addEventListener('change', async (e) => {
     const manual = { ...(state.settings.manualRates || {}) };
     if (v > 0) manual[el.dataset.rate] = v; else delete manual[el.dataset.rate];
     S.setSetting('manualRates', manual);
+    return;
+  }
+  if (el.dataset.ui === 'testCat') {
+    ui.testCat = el.value;
+    render();
     return;
   }
   if (el.dataset.ui === 'siteCat') {
@@ -992,8 +1469,19 @@ document.addEventListener('change', async (e) => {
         form.elements.region.value = site.region;
         form.elements.currency.value = site.cur || REGION_CURRENCY[site.region];
         form.elements.country.value = REGION_COUNTRY[site.region];
+        form.elements.overseas.checked = site.region !== 'HK';
+        applyRegionDefaults(form, site.region);
         form.elements.country.dispatchEvent(new Event('change', { bubbles: true }));
       }
+    }
+    if (el.name === 'region') {
+      form.elements.overseas.checked = el.value !== 'HK';
+      const rate = state.settings.fwdRates?.[el.value];
+      if (rate !== undefined && rate !== '') form.elements.fwdRate.value = rate;
+    }
+    if (el.name === 'url') {
+      const url = extractUrl(el.value);
+      if (url) applyDetection(form, detectFromUrl(url, S.getSites({ includeDisabled: true })));
     }
     if (el.name === 'mode' && el.value === 'online') {
       const r = form.elements.region.value;
@@ -1072,9 +1560,18 @@ window.addEventListener('beforeinstallprompt', (e) => {
 // ---------- boot ----------
 setLang(state.settings.lang);
 render();
+
+// Android "Share to PriceBook" (Web Share Target) arrives as ?url=&text=&title=
+(() => {
+  const p = new URLSearchParams(location.search);
+  if (!p.has('url') && !p.has('text') && !p.has('title')) return;
+  const url = extractUrl(p.get('url')) || extractUrl(p.get('text')) || extractUrl(p.get('title'));
+  history.replaceState(null, '', location.pathname + location.hash);
+  if (url) openQuoteFromUrl(url);
+})();
 if (!state.rates || Date.now() - (state.rates.fetchedAt || 0) > 6 * 3600_000) refreshRates({ quiet: true });
 lastAutoSync = Date.now();
-doSync({ quiet: true });
+doSync({ quiet: true }).then(loadOpw);
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('./sw.js').catch(() => {});

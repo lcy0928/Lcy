@@ -1,6 +1,7 @@
 // App state, persisted to localStorage. The GitHub token is stored on its own
 // key and never included in exports or the synced payload.
 import { DEFAULT_SITES } from './sites.js';
+import { DEFAULT_CARD } from './landed.js';
 import { localDate, uid } from './util.js';
 
 const KEY = 'pricebook:v1';
@@ -14,7 +15,10 @@ function defaults() {
       lang: zh ? 'zh' : 'en',
       base: 'HKD',
       cardCurrency: 'HKD',
-      cardFeePct: 1.95,
+      cards: [{ ...DEFAULT_CARD }],
+      staleDays: 7,
+      // Forwarder price per kg in HKD, by warehouse region (Buy&Ship UK ≈ HK$25/lb in 2026).
+      fwdRates: { UK: 55, EU: '', GLOBAL: '' },
       manualRates: {},
       updatedAt: 0,
     },
@@ -41,6 +45,11 @@ function load() {
     const raw = localStorage.getItem(KEY);
     if (!raw) return d;
     const s = JSON.parse(raw);
+    // v1 kept a single FX fee; turn it into the default card.
+    if (s.settings && !Array.isArray(s.settings.cards)) {
+      s.settings.cards = [{ ...DEFAULT_CARD, fcc: s.settings.cardFeePct ?? DEFAULT_CARD.fcc }];
+      delete s.settings.cardFeePct;
+    }
     return {
       ...d,
       ...s,
@@ -86,7 +95,7 @@ export function setSetting(key, value) {
 export function getSites({ includeDisabled = false } = {}) {
   const out = DEFAULT_SITES.map((s) => {
     const o = state.siteState[s.id] || {};
-    return { ...s, ...(o.name ? { name: o.name } : {}), ...(o.url ? { url: o.url } : {}), enabled: o.enabled !== false, builtin: true };
+    return { ...s, ...(o.name ? { name: o.name } : {}), ...(o.url ? { url: o.url, via: '' } : {}), enabled: o.enabled !== false, check: o.check || '', builtin: true };
   });
   for (const c of state.customSites) if (!c.deleted) out.push({ ...c, enabled: c.enabled !== false, builtin: false });
   return includeDisabled ? out : out.filter((s) => s.enabled);
@@ -155,10 +164,25 @@ export function upsertQuote(itemId, quote) {
   const now = Date.now();
   const existing = quote.id && item.quotes.find((q) => q.id === quote.id);
   if (existing) Object.assign(existing, quote, { updatedAt: now });
-  else item.quotes.push({ date: localDate(), ...quote, id: uid(), createdAt: now, updatedAt: now });
+  else item.quotes.push({ date: localDate(), ...quote, id: quote.id || uid(), createdAt: now, updatedAt: now });
   item.updatedAt = now;
   save({ synced: true });
   return item;
+}
+
+/** Add many quotes and mark others as seen on `date`, with a single save. */
+export function applyQuoteUpdates(itemId, add, seenIds, date, extra = {}) {
+  const item = getItem(itemId);
+  if (!item) return;
+  const now = Date.now();
+  for (const q of add) {
+    if (!item.quotes.some((x) => x.id === q.id)) item.quotes.push({ ...q, createdAt: now, updatedAt: now });
+  }
+  for (const q of item.quotes) {
+    if (seenIds.includes(q.id)) Object.assign(q, { seenAt: date, updatedAt: now });
+  }
+  Object.assign(item, extra, { updatedAt: now });
+  save({ synced: true });
 }
 
 export function deleteQuote(itemId, quoteId) {

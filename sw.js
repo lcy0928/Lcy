@@ -1,6 +1,6 @@
 // Offline support: app files are served from cache and refreshed in the
 // background. Exchange-rate and GitHub API calls always go to the network.
-const VERSION = 'pricebook-v1';
+const VERSION = 'pricebook-v2';
 const SHELL = [
   './',
   './index.html',
@@ -15,6 +15,11 @@ const SHELL = [
   './js/sync.js',
   './js/chart.js',
   './js/util.js',
+  './js/detect.js',
+  './js/opw.js',
+  './js/alerts.js',
+  './js/scan.js',
+  './js/ocr.js',
   './icons/icon.svg',
   './icons/icon-192.png',
 ];
@@ -38,6 +43,22 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin && !isFont(url)) return;
+
+  // Daily data: try the network first so prices are current, fall back to the cached copy offline.
+  if (url.origin === self.location.origin && url.pathname.includes('/data/')) {
+    e.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(VERSION).then((c) => c.put(req, copy));
+          }
+          return res;
+        })
+        .catch(() => caches.match(req)),
+    );
+    return;
+  }
 
   const cached = caches.match(req, { ignoreSearch: url.origin === self.location.origin });
   const fresh = fetch(req).then((res) => {
