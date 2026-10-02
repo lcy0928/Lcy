@@ -490,3 +490,4 @@ dialog::backdrop { background: rgb(13 20 26 / 0.45); }
 @media (forced-colors: active) {
   .price-tag, .preview-tag, .mini-tag { border: 2px solid CanvasText; -webkit-mask: none; mask: none; }
 }
+.version-row { align-items: center; justify-content: space-between; margin-top: 8px; }

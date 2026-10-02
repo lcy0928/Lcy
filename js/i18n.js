@@ -208,6 +208,7 @@ const zh = {
   'set.clearConfirm': '確定？會刪除呢部機所有心水同設定（GitHub Gist 上嘅備份唔受影響）。',
   'set.install': '安裝到主畫面',
   'set.about': '關於',
+  'set.version': '版本 {v}', 'set.forceUpdate': '強制更新', 'set.updating': '更新緊…',
   'set.aboutText': '格價簿只會將資料存喺你部機同你自己嘅 GitHub Gist。價錢由你記錄；網站連結只係幫你直接開啟搜尋結果頁。退稅、VAT 等預設數字只供參考，以商戶同當地規定為準。',
 
   'siteDlg.add': '新增網站', 'siteDlg.edit': '編輯網站',
@@ -433,6 +434,7 @@ const en = {
   'set.clearConfirm': 'Erase every item and setting on this device? Your GitHub Gist copy is not affected.',
   'set.install': 'Install app',
   'set.about': 'About',
+  'set.version': 'Version {v}', 'set.forceUpdate': 'Force update', 'set.updating': 'Updating…',
   'set.aboutText': 'PriceBook keeps your data only on this device and in your own GitHub Gist. You log the prices; site links just open each site’s search results. VAT and refund presets are estimates — the retailer’s and country’s rules apply.',
 
   'siteDlg.add': 'Add site', 'siteDlg.edit': 'Edit site',

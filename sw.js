@@ -1,6 +1,7 @@
-// Offline support: app files are served from cache and refreshed in the
-// background. Exchange-rate and GitHub API calls always go to the network.
-const VERSION = 'pricebook-v5';
+// Offline support. App files come from the network first (revalidated, so a new
+// version shows up on the next open) and fall back to the cached copy offline or
+// when the network is slow. Exchange-rate and GitHub API calls are not cached.
+const VERSION = 'pricebook-v6';
 const SHELL = [
   './',
   './index.html',
@@ -22,12 +23,18 @@ const SHELL = [
   './js/ocr.js',
   './js/translate.js',
   './js/market.js',
+  './js/version.js',
   './icons/icon.svg',
   './icons/icon-192.png',
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache: 'reload' skips the browser's HTTP cache, so a new version never caches old files.
+  e.waitUntil(
+    caches.open(VERSION)
+      .then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' }))))
+      .then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener('activate', (e) => {
@@ -62,14 +69,32 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  const cached = caches.match(req, { ignoreSearch: url.origin === self.location.origin });
-  const fresh = fetch(req).then((res) => {
-    if (res.ok || res.type === 'opaque') {
+  // Fonts never change: cached copy first.
+  if (isFont(url)) {
+    e.respondWith(caches.match(req).then((hit) => hit || fetch(req).then((res) => {
+      const copy = res.clone();
+      caches.open(VERSION).then((c) => c.put(req, copy));
+      return res;
+    })));
+    return;
+  }
+
+  // App files: network first (revalidated with the server), cache when offline or after 4 s.
+  const fromCache = () => caches.match(req, { ignoreSearch: true });
+  const net = fetch(new Request(req.url, { cache: 'no-cache', credentials: 'same-origin' })).then((res) => {
+    // Safari refuses a redirected response for a page load; hand back a plain copy.
+    if (res.redirected) res = new Response(res.body, { status: res.status, statusText: res.statusText, headers: res.headers });
+    if (res.ok) {
       const copy = res.clone();
       caches.open(VERSION).then((c) => c.put(req, copy));
     }
     return res;
   });
-  e.waitUntil(fresh.catch(() => {}));
-  e.respondWith(cached.then((hit) => hit || fresh));
+  e.waitUntil(net.catch(() => {}));
+  e.respondWith(new Promise((resolve) => {
+    let done = false;
+    const finish = (res) => { if (!done && res) { done = true; resolve(res); } };
+    net.then(finish, () => fromCache().then((hit) => finish(hit || Response.error())));
+    setTimeout(() => fromCache().then(finish), 4000);
+  }));
 });

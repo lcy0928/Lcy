@@ -81,7 +81,7 @@ export const DEFAULT_SITES = [
   { id: 'bandq', name: 'B&Q', region: 'UK', kind: 'shop', cats: ['home'], ...gsite('diy.com') },
   { id: 'boots', name: 'Boots', region: 'UK', kind: 'shop', cats: ['home', 'grocery'], url: 'https://www.boots.com/sitesearch?searchTerm={q}' },
   { id: 'superdrug', name: 'Superdrug', region: 'UK', kind: 'shop', cats: ['home', 'grocery'], url: 'https://www.superdrug.com/search?text={q}' },
-  { id: 'trolley', name: 'Trolley.co.uk', region: 'UK', kind: 'compare', cats: ['grocery'], top: ['grocery'], ...gsite('trolley.co.uk') },
+  { id: 'trolley', name: 'Trolley.co.uk', region: 'UK', kind: 'compare', cats: ['grocery'], top: ['grocery'], url: 'https://www.trolley.co.uk/search/?q={q}' },
   { id: 'tesco', name: 'Tesco', region: 'UK', kind: 'shop', cats: ['grocery'], url: 'https://www.tesco.com/groceries/en-GB/search?query={q}' },
   { id: 'sainsburys', name: "Sainsbury's", region: 'UK', kind: 'shop', cats: ['grocery'], url: 'https://www.sainsburys.co.uk/gol-ui/SearchResults/{q}' },
   { id: 'asda', name: 'Asda', region: 'UK', kind: 'shop', cats: ['grocery'], ...gsite('asda.com') },
