@@ -29,10 +29,17 @@ function mergeMap(a = {}, b = {}) {
   return out;
 }
 
+// Settings are last-write-wins, except your translation fixes, which merge word by word.
+function mergeSettings(a, b) {
+  const s = newer(a, b);
+  if (!s || !(a?.myWords || b?.myWords)) return s;
+  return { ...s, myWords: mergeMap(a?.myWords, b?.myWords) };
+}
+
 export function mergeData(local = {}, remote = {}) {
   return {
     v: 1,
-    settings: newer(local.settings, remote.settings),
+    settings: mergeSettings(local.settings, remote.settings),
     siteState: mergeMap(local.siteState, remote.siteState),
     customSites: mergeById(local.customSites, remote.customSites),
     items: mergeById(local.items, remote.items, mergeItem),

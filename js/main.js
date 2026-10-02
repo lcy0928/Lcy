@@ -210,16 +210,19 @@ function langsNeeded() {
   return [...new Set([...sitesShown().map(siteLang), ...marketsWanted().map((m) => MARKETS[m].lang)])];
 }
 
-/** The keyword (or city) to use in `lang`: your own edit, else the translation, else as typed. */
+// Your remembered fixes, for the translator: (phrase, lang) => text.
+const memo = (phrase, lang) => S.myWord(phrase, lang);
+
+/** The keyword (or city) to use in `lang`: your own fix, else the translation, else as typed. */
 function termFor(lang) {
   const text = trSource();
   if (!text || !autoTr()) return text;
   const src = detectLang(text);
   if (lang === src) return text;
-  const edits = state.search.trEdits;
-  if (edits?.text === text && edits.map?.[lang]) return edits.map[lang];
+  const mine = S.myWord(text, lang);
+  if (mine) return mine;
   if (tr.text === text && tr.out[lang]) return tr.out[lang].text;
-  return translateSync(text, src, lang) ?? text;
+  return translateSync(text, src, lang, memo) ?? text;
 }
 
 /** Search parameters for one site, with the keyword in the site's language. */
@@ -243,18 +246,19 @@ async function runTranslation() {
   if (tr.text !== text) Object.assign(tr, { text, src, out: {}, pending: new Set() });
   const todo = langsNeeded().filter((l) => l !== src && !tr.out[l]);
   for (const l of todo) {
-    const quick = translateSync(text, src, l);
+    const quick = translateSync(text, src, l, memo);
     if (quick !== null) tr.out[l] = { text: quick, ok: true };
     else tr.pending.add(l);
   }
   refreshResults();
-  for (const l of [...tr.pending]) {
-    const r = await translate(text, src, l);
+  // All languages at once; each result shows as soon as it arrives.
+  await Promise.all([...tr.pending].map(async (l) => {
+    const r = await translate(text, src, l, undefined, memo);
     if (tr.text !== text) return; // keyword changed meanwhile
     tr.out[l] = r;
     tr.pending.delete(l);
     refreshResults();
-  }
+  }));
 }
 
 function refreshResults() {
@@ -286,13 +290,13 @@ function trRow() {
   const chips = langs.map((l) => {
     const pending = tr.text === text && tr.pending.has(l);
     const failed = tr.text === text && tr.out[l] && !tr.out[l].ok;
-    const edited = state.search.trEdits?.text === text && state.search.trEdits.map?.[l];
+    const edited = !!S.myWord(text, l);
     const label = pending ? t('tr.pending') : shortLabel(text, termFor(l));
     return `<button type="button" class="tr-chip${failed ? ' failed' : ''}${edited ? ' edited' : ''}" data-act="tr-edit" data-lang="${l}" title="${esc(termFor(l))}" aria-label="${esc(`${t('lang.' + l)}: ${termFor(l)}. ${t('tr.editHint')}`)}">
       <span class="tr-lang">${LANG_LABEL[l]}</span><span class="tr-text" lang="${l === 'zh' ? 'zh-HK' : l}">${esc(label)}</span>${failed ? ' ⚠' : ''}</button>`;
   }).join('');
   const anyFailed = langs.some((l) => tr.text === text && tr.out[l] && !tr.out[l].ok);
-  return `${toggle}<div class="tr-chips">${chips}</div>${anyFailed ? `<p class="muted small">${t('tr.failed')}</p>` : ''}`;
+  return `${toggle}<div class="tr-chips">${chips}</div><p class="muted small tr-hint">${t('tr.fixHint')}</p>${anyFailed ? `<p class="muted small">${t('tr.failed')}</p>` : ''}`;
 }
 
 const MISSING_LABEL = {
@@ -949,6 +953,7 @@ function viewSettings() {
       <button type="button" class="btn quiet danger" data-act="clear-all">${t('set.clear')}</button>
     </div>
   </section>
+  ${wordsSection()}
   <section class="card about">
     <h2 class="section-h">${t('set.about')}</h2>
     <p class="muted small">${t('set.aboutText')}</p>
@@ -956,6 +961,21 @@ function viewSettings() {
       <span class="muted small">${esc(t('set.version', { v: APP_VERSION.replace('pricebook-', '') }))}</span>
       <button type="button" class="btn small" data-act="force-update">${t('set.forceUpdate')}</button>
     </div>
+  </section>`;
+}
+
+// Your translation fixes, with a way to forget each one.
+function wordsSection() {
+  const words = S.liveWords();
+  const rows = words.map(([key, w]) => `<li class="word-row">
+      <div><div class="word-src">${esc(w.text || key)}</div>
+        <div class="muted small">${Object.entries(w.map).map(([l, v]) => `${LANG_LABEL[l] || l}: ${esc(v)}`).join(' · ')}</div></div>
+      <button type="button" class="btn small quiet danger" data-act="word-del" data-key="${esc(key)}">${t('words.forget')}</button>
+    </li>`).join('');
+  return `<section class="card">
+    <h2 class="section-h">${t('words.title')} <small>${words.length}</small></h2>
+    <p class="muted small">${t('words.lead')}</p>
+    ${words.length ? `<ul class="word-list">${rows}</ul>` : ''}
   </section>`;
 }
 
@@ -1518,12 +1538,19 @@ const actions = {
     const now = termFor(lang);
     const v = prompt(t('tr.editPrompt', { lang: LANG_LABEL[lang] }), now);
     if (v === null) return;
-    const edits = state.search.trEdits?.text === text ? state.search.trEdits : { text, map: {} };
-    if (v.trim() && v.trim() !== now) edits.map[lang] = v.trim();
-    else if (!v.trim()) delete edits.map[lang];
-    state.search.trEdits = edits;
-    S.save();
-    refreshResults();
+    // Remembered for next time (and inside longer searches); an empty answer forgets it.
+    if (!v.trim()) S.rememberWord(text, lang, '');
+    else if (v.trim() !== now) S.rememberWord(text, lang, v.trim());
+    else return;
+    toast(t(v.trim() ? 'tr.remembered' : 'tr.forgotten'));
+    tr.text = ''; // translate again with the fix
+    scheduleTranslation(0);
+  },
+  'word-del'(el) {
+    S.forgetWord(el.dataset.key);
+    tr.text = '';
+    softRender();
+    toast(t('tr.forgotten'));
   },
   'focus-search'() {
     const el = $$('.search-form [data-bind]').find((x) => !x.value && !x.disabled && x.type !== 'checkbox') || $('.search-form [data-bind]');
