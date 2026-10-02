@@ -18,6 +18,7 @@ const SHELL = [
   './js/detect.js',
   './js/opw.js',
   './js/alerts.js',
+  './js/scan.js',
   './icons/icon.svg',
   './icons/icon-192.png',
 ];

@@ -63,6 +63,9 @@ const zh = {
   'due.title': '今日要格價', 'due.hint': '以下心水超過 {n} 日未更新價錢。', 'due.go': '去格價',
   'item.trendFx': '走勢用每個價記錄當日嘅匯率；排名就用今日匯率。',
   'fx.logged': '記價時匯率：{rates}（{date}）',
+  'scan.button': '掃描條碼', 'scan.title': '掃描條碼', 'scan.hint': '將條碼對準框入面',
+  'scan.photo': '用相片', 'scan.loading': '載入緊掃描器…', 'scan.found': '掃到：{code}',
+  'scan.fail': '用唔到相機（{err}）。可以撳「用相片」影一張條碼相。', 'scan.none': '相入面搵唔到條碼',
   'quote.card': '付款卡', 'quote.overseas': '海外商戶（用港幣付款都會收跨境費）',
 
   'list.title': '心水清單',
@@ -258,6 +261,9 @@ const en = {
   'due.title': 'Due for a price check', 'due.hint': 'These items haven’t had a new price for over {n} days.', 'due.go': 'Check prices',
   'item.trendFx': 'The trend uses each price’s own exchange rate; the ranking uses today’s.',
   'fx.logged': 'Rate when logged: {rates} ({date})',
+  'scan.button': 'Scan barcode', 'scan.title': 'Scan a barcode', 'scan.hint': 'Point the camera at the barcode',
+  'scan.photo': 'Use a photo', 'scan.loading': 'Loading the scanner…', 'scan.found': 'Scanned: {code}',
+  'scan.fail': 'Camera unavailable ({err}). Tap “Use a photo” to take a picture of the barcode.', 'scan.none': 'No barcode found in the photo',
   'quote.card': 'Pay with', 'quote.overseas': 'Overseas merchant (cross-border fee applies even in HKD)',
 
   'list.title': 'Watchlist',

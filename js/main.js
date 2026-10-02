@@ -9,6 +9,7 @@ import { buildChart, bindChart } from './chart.js';
 import { esc, num, uid, localDate, addDays, safeUrl } from './util.js';
 import { detectFromUrl, extractUrl, nameFromUrl } from './detect.js';
 import { alertsFor } from './alerts.js';
+import { startScan, scanFile } from './scan.js';
 import { expandOpw, searchOpw, opwQuotes, opwUpdates, productName, opwProductUrl, storeName } from './opw.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -66,6 +67,7 @@ function route() {
 const ICONS = {
   search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>',
   list: '<path d="M3.5 12.5V4.5a1 1 0 0 1 1-1h8l8 8-9 9z"/><circle cx="8" cy="8" r="1.6"/>',
+  barcode: '<path d="M4 6v12M7 6v12M10 6v12M14 6v12M16 6v12M20 6v12"/><path d="M2 4h3M19 4h3M2 20h3M19 20h3"/>',
   calc: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8.5 7.5h7M8.5 12h1M14.5 12h1M8.5 16h1M14.5 16h1"/>',
   settings: '<path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17" r="2"/>',
 };
@@ -147,7 +149,8 @@ function searchFields() {
       ${field(t('search.adults'), inp('adults', 'number', 'min="1" max="16" inputmode="numeric"'))}
     </div>`;
   }
-  return field(t('search.keyword'), inp('q', 'search', `placeholder="${esc(t('search.keywordPh'))}" enterkeyhint="search" autocomplete="off"`), 'field-big');
+  return field(t('search.keyword'), `<div class="kw-row">${inp('q', 'search', `placeholder="${esc(t('search.keywordPh'))}" enterkeyhint="search" autocomplete="off"`)}
+    <button type="button" class="btn scan-btn" data-act="scan" aria-label="${esc(t('scan.button'))}" title="${esc(t('scan.button'))}">${icon('barcode')}</button></div>`, 'field-big');
 }
 
 function viewSearch() {
@@ -705,6 +708,7 @@ function closeDialog() {
 }
 
 dlg.addEventListener('close', () => {
+  ui.dialog?.cleanup?.();
   document.body.appendChild($('#toast'));
   ui.dialog = null;
   dlg.innerHTML = '';
@@ -927,6 +931,35 @@ function saveQuote(form) {
   return true;
 }
 
+function openScanner() {
+  openDialog(`<form method="dialog" class="dlg-form" data-form="scan">
+    <header class="dlg-head"><h2>${t('scan.title')}</h2>
+      <button type="button" class="icon-btn" data-act="dlg-close" aria-label="${esc(t('close'))}">✕</button></header>
+    <div class="dlg-body">
+      <div class="scan-view"><video playsinline muted></video><div class="scan-frame" aria-hidden="true"></div></div>
+      <p class="muted small" id="scan-status" aria-live="polite">${t('scan.loading')}</p>
+      <label class="btn">${t('scan.photo')}<input type="file" accept="image/*" capture="environment" data-act="scan-photo" hidden></label>
+    </div></form>`, { kind: 'scan' });
+  const video = $('video', dlg);
+  video.addEventListener('playing', () => { const s = $('#scan-status'); if (s) s.textContent = t('scan.hint'); }, { once: true });
+  ui.dialog.cleanup = startScan(video, onScanned, (e) => {
+    const s = $('#scan-status');
+    if (s) s.textContent = t('scan.fail', { err: e.message || e.name });
+  });
+}
+
+function onScanned(code) {
+  closeDialog();
+  if (!code) { toast(t('scan.none'), 'bad'); return; }
+  if (/^https?:\/\//.test(code)) { openQuoteFromUrl(code); return; }
+  if (!isProduct(state.search.cat)) state.search.cat = 'other';
+  state.search.q = code;
+  S.save();
+  if (route().name !== 'search') location.hash = '#/search';
+  else render();
+  toast(t('scan.found', { code }));
+}
+
 function openItemDialog(item) {
   const base = state.settings.base;
   openDialog(`<form method="dialog" class="dlg-form" data-form="item" novalidate>
@@ -1117,6 +1150,7 @@ const actions = {
     try { await navigator.clipboard.writeText(el.dataset.copy); toast(t('alert.copied')); } catch { /* still open the site */ }
     window.open(el.dataset.href, '_blank', 'noopener');
   },
+  scan() { openScanner(); },
   'item-add'() { openItemDialog(null); },
   'item-edit'(el) { openItemDialog(S.getItem(el.dataset.item)); },
   'item-delete'(el) {
@@ -1258,6 +1292,12 @@ document.addEventListener('click', (e) => {
 document.addEventListener('change', async (e) => {
   const el = e.target;
   if (el.dataset.act === 'site-toggle') return actions['site-toggle'](el);
+  if (el.dataset.act === 'scan-photo' && el.files?.[0]) {
+    const status = $('#scan-status');
+    if (status) status.textContent = t('scan.loading');
+    try { onScanned(await scanFile(el.files[0])); } catch (e) { if (status) status.textContent = t('scan.fail', { err: e.message || e.name }); }
+    return;
+  }
   if (el.dataset.act === 'import' && el.files?.[0]) {
     try {
       const data = JSON.parse(await el.files[0].text());
