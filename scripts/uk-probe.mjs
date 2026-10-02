@@ -1,30 +1,31 @@
-// Temporary: what "Website" means in Morrisons' terms of use, and whether Lidl GB's
-// search lists groceries with prices. Prints findings only; writes nothing.
+// Temporary: where Morrisons search pages keep products (window.__INITIAL_STATE__).
+// Prints findings only; writes nothing.
 const UA = 'PriceBook/1.0 (personal price comparison; +https://github.com/lcy0928/Lcy)';
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const text = (html) => html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<nav[\s\S]*?<\/nav>|<header[\s\S]*?<\/header>|<footer[\s\S]*?<\/footer>/gi, ' ')
-  .replace(/<[^>]+>/g, ' ').replace(/&nbsp;|&#160;/g, ' ').replace(/&amp;/g, '&').replace(/&#39;|&rsquo;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, ' ');
 
-async function get(url) {
-  const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'text/html,application/json;q=0.9,*/*;q=0.8' } });
-  const body = await res.text();
-  console.log(`\n== ${url}\n   HTTP ${res.status} ${body.length} bytes`);
-  await sleep(1500);
-  return body;
-}
+const res = await fetch('https://groceries.morrisons.com/search?q=orange%20juice', { headers: { 'User-Agent': UA, Accept: 'text/html' } });
+const html = await res.text();
+console.log(`HTTP ${res.status} ${html.length} bytes`);
+const m = html.match(/window\.__INITIAL_STATE__=([\s\S]*?)<\/script>/);
+const state = JSON.parse(m[1].replace(/;\s*$/, ''));
 
-// Morrisons terms of use: the start (definitions, 1.x, 2.x).
-const t = text(await get('https://www.morrisons.com/terms/terms-and-conditions-of-use'));
-const start = Math.max(0, t.search(/terms and conditions of use/i));
-for (let i = start; i < Math.min(t.length, start + 4000); i += 500) console.log(`   ${t.slice(i, i + 500)}`);
-
-// Lidl GB: products (name + price) in the search page data for everyday groceries.
-for (const q of ['milk', 'orange juice', 'bread']) {
-  const html = (await get(`https://www.lidl.co.uk/q/search?q=${encodeURIComponent(q)}`)).replace(/&quot;/g, '"');
-  const rows = [];
-  for (const m of html.matchAll(/"fullTitle":"([^"]{1,120})"[\s\S]{0,3000}?"price":(\d+(?:\.\d+)?)/g)) rows.push(`${m[1]} £${m[2]}`);
-  const cats = {};
-  for (const m of html.matchAll(/"wonCategoryPrimary":"([^"]+)"/g)) cats[m[1].split('/')[1] || m[1]] = (cats[m[1].split('/')[1] || m[1]] || 0) + 1;
-  console.log(`   categories: ${JSON.stringify(cats)}`);
-  console.log(`   first products: ${rows.slice(0, 8).join(' | ') || '(none parsed)'}`);
-}
+// Objects that look like products: a name and something price-like.
+const found = [];
+(function walk(o, path) {
+  if (!o || typeof o !== 'object' || found.length > 400) return;
+  const keys = Object.keys(o);
+  if (keys.includes('name') && keys.some((k) => /price/i.test(k)) && typeof o.name === 'string') found.push([path, o]);
+  for (const k of keys) walk(o[k], `${path}.${k}`);
+})(state, 'state');
+console.log(`product-like objects: ${found.length}`);
+const paths = {};
+for (const [p] of found) { const g = p.replace(/\.[0-9a-f-]{8,}|\.\d+/gi, '.*'); paths[g] = (paths[g] || 0) + 1; }
+console.log(JSON.stringify(paths, null, 1));
+for (const [p, o] of found.slice(0, 3)) console.log(`\n${p}\n${JSON.stringify(o).slice(0, 2500)}`);
+// Search result order (ids), if listed separately.
+(function walk(o, path, depth) {
+  if (!o || typeof o !== 'object' || depth > 8) return;
+  for (const [k, v] of Object.entries(o)) {
+    if (/productid|productlist|results|items/i.test(k) && Array.isArray(v) && v.length) console.log(`list ${path}.${k} (${v.length}): ${JSON.stringify(v.slice(0, 3)).slice(0, 400)}`);
+    walk(v, `${path}.${k}`, depth + 1);
+  }
+})(state, 'state', 0);
