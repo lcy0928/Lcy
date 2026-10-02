@@ -14,7 +14,7 @@ import { startScan, scanFile } from './scan.js';
 import { readPrices } from './ocr.js';
 import { expandOpw, searchOpw, opwQuotes, opwUpdates, productName, opwProductUrl, storeName } from './opw.js';
 import { APP_VERSION } from './version.js';
-import { SITE_OPW, SITE_MARKET, SITE_BRAND, opwBest, marketBest, openProductsUrl, openPricesUrl, parseOpenPrices, openBest, onsMatch, loggedBest } from './prices.js';
+import { SITE_OPW, SITE_MARKET, SITE_BRAND, opwBest, marketBest, openProductsUrl, openPricesUrl, parseOpenPrices, openBest, onsMatch, basketMatch, loggedBest } from './prices.js';
 import { MARKETS, STORE_COUNTRY, expandMarket, searchMarket, marketUpdates, productLink, storeName as marketStore } from './market.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -325,12 +325,20 @@ function searchResults() {
     : `<p class="hint">${t('search.hint')}</p>`;
   ensureUkPrices();
   const pc = priceContext();
-  return `${opwPanel()}${marketPanels()}${banner}${groups.map(([r, list]) => `
+  return `${opwPanel()}${marketPanels()}${banner}${groups.map(([r, list]) => {
+    const rows = list.map((site) => {
+      const p = paramsFor(site);
+      const pr = buildUrl(site.url, p).missing.length ? { html: '', has: false } : sitePrice(site, pc);
+      return { site, p, pr };
+    });
+    const priced = rows.filter((x) => x.pr.has).length;
+    return `
     <section class="region">
-      <h2 class="region-h"><span>${t('region.' + r)}</span><small>${t('search.count', { n: list.length })}</small></h2>
+      <h2 class="region-h"><span>${t('region.' + r)}</span><small>${priced ? t('price.count', { n: priced, total: list.length }) : t('search.count', { n: list.length })}</small></h2>
       ${r === 'UK' ? onsNote() : ''}
-      <ul class="sites">${list.map((site) => siteRow(site, paramsFor(site), pc)).join('')}</ul>
-    </section>`).join('')}`;
+      <ul class="sites">${rows.map((x) => siteRow(x.site, x.p, x.pr.html)).join('')}</ul>
+    </section>`;
+  }).join('')}`;
 }
 
 function opwPanel() {
@@ -525,6 +533,8 @@ function marketPanel(m) {
 const opLive = { term: '', state: '', list: [] };
 let ons = null; // UK typical prices from ONS, data/ons.json
 let onsState = '';
+let basket = null; // Morrisons prices of 50 everyday items, daily: data/morrisons.json
+let basketState = '';
 
 const ukGroceryWanted = () => {
   const s = state.search;
@@ -540,6 +550,13 @@ function ensureUkPrices() {
     getJson('data/ons.json')
       .then((d) => { ons = d; onsState = 'ok'; })
       .catch(() => { onsState = 'fail'; })
+      .finally(refreshSearch);
+  }
+  if (!basketState) {
+    basketState = 'loading';
+    getJson('data/morrisons.json')
+      .then((d) => { basket = d; basketState = 'ok'; })
+      .catch(() => { basketState = 'fail'; })
       .finally(refreshSearch);
   }
   // Wait for the English words before asking Open Prices.
@@ -613,6 +630,17 @@ function dataPrice(site, pc) {
       stale: !inFresh, storeStale: !inFresh, unit: p.pu && p.pu.per !== 'pc' ? `${fmt(p.pu.value, 'EUR', lang)}/${t('mkt.per.' + p.pu.per)}` : '',
     };
   }
+  if (site.id === 'morrisons' && ukGroceryWanted()) {
+    // Today's cheapest of the daily basket item; other searches fall back to Open Prices.
+    if (basketState === 'loading') return 'loading';
+    const x = basketMatch(basket, termFor('en'));
+    if (x) {
+      return {
+        price: x.price, cur: 'GBP', name: x.name, url: x.url, src: 'Morrisons', date: basket.date,
+        stale: ageDays(basket.date) > 3, unit: x.per ? `${fmt(x.unit, 'GBP', lang)}/${t('mkt.per.' + x.per)}` : '',
+      };
+    }
+  }
   if (SITE_BRAND[site.id] && ukGroceryWanted()) {
     if (opLive.state === 'loading' || !opLive.state) return 'loading';
     const best = openBest(opLive.list, SITE_BRAND[site.id], pc.today);
@@ -658,7 +686,8 @@ function sitePrice(site, pc) {
       ${old ? `<span class="stale-tag">${t('mkt.staleTitle')}</span>` : ''}
     </div>`;
   }
-  return html || `<div class="site-price none">${t('price.none')}</div>`;
+  // Sites without a price show nothing; the region header counts the ones that have one.
+  return { html, has: !!mine || (!!found && found !== 'loading') };
 }
 
 // UK-wide typical price of the item (ONS), shown above the UK sites.
@@ -671,7 +700,7 @@ function onsNote() {
   return `<p class="region-note">${t('price.ons', { month: esc(ons.month || '') })} ${list}</p>`;
 }
 
-function siteRow(site, params, pc) {
+function siteRow(site, params, priceHtml = '') {
   const { url, missing } = buildUrl(site.url, params);
   const href = safeUrl(url);
   // Without the search details, open the site's home page instead of a dead button.
@@ -689,7 +718,7 @@ function siteRow(site, params, pc) {
       ${site.via === 'google' ? `<span class="badge">${t('site.viaGoogle')}</span>` : ''}
       ${site.check === 'bad' ? `<span class="badge warn-badge">${t('test.badBadge')}</span>` : ''}
     </div>
-    ${pc && !missing.length ? sitePrice(site, pc) : ''}
+    ${priceHtml}
     <div class="site-actions">${open}<button type="button" class="btn small quiet" data-act="log-from-search" data-site="${esc(site.id)}">${t('search.log')}</button></div>
   </li>`;
 }

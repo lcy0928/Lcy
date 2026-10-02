@@ -5,6 +5,7 @@
 //   - Dutch and Austrian supermarket open data (js/market.js)
 //   - Open Prices by Open Food Facts: crowd-sourced shelf prices, read live (UK sites)
 //   - ONS average prices: UK-wide typical price of common items, monthly (data/ons.json)
+//   - Morrisons: cheapest product for 50 everyday items, daily (data/morrisons.json)
 //   - prices you logged yourself
 // Each function here is pure, so the matching can be tested without the app.
 
@@ -108,6 +109,38 @@ export function onsMatch(db, term, n = 2) {
     .sort((a, b) => b[2] - a[2])
     .slice(0, n)
     .map(([desc, price, count]) => ({ desc, price, count }));
+}
+
+/** Lower-case English words, plurals folded ("tomatoes" → "tomato", "sausages" → "sausage"). */
+export function wordsOf(text) {
+  return String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean)
+    .map((w) => (w.length < 4 || /ss$/.test(w) ? w
+      : w.endsWith('ies') ? `${w.slice(0, -3)}y`
+      : /(oes|ches|shes|xes)$/.test(w) ? w.slice(0, -2)
+      : w.endsWith('s') ? w.slice(0, -1) : w));
+}
+
+/**
+ * The daily basket item for an (English) search term: every word of the item is in
+ * the term, most words wins ("orange juice" over "oranges"), then the one ending
+ * like the term ("milk chocolate" → chocolate).
+ * db = { date, items: [[item ('a|b' for aliases), name, price, unit price, per, url]] }
+ */
+export function basketMatch(db, term) {
+  const t = wordsOf(term);
+  if (!db?.items || !t.length) return null;
+  let best = null;
+  for (const row of db.items) {
+    for (const alias of String(row[0]).split('|')) {
+      const w = wordsOf(alias);
+      if (!w.length || !w.every((x) => t.includes(x))) continue;
+      const score = w.length * 2 + (w[w.length - 1] === t[t.length - 1] ? 1 : 0);
+      if (!best || score > best.score) best = { score, row };
+    }
+  }
+  if (!best) return null;
+  const [, name, price, unit, per, url] = best.row;
+  return { name, price, unit, per, url };
 }
 
 /** Your latest logged price for this site, from the watchlist items that match the search. */
