@@ -1,6 +1,6 @@
 // Offline support: app files are served from cache and refreshed in the
 // background. Exchange-rate and GitHub API calls always go to the network.
-const VERSION = 'pricebook-v2';
+const VERSION = 'pricebook-v3';
 const SHELL = [
   './',
   './index.html',

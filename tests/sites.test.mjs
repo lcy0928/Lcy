@@ -70,3 +70,12 @@ test('Consumer Council search uses the highlight path', () => {
   const opw = DEFAULT_SITES.find((s) => s.id === 'opw');
   assert.equal(buildUrl(opw.url, { q: '牛奶' }).url, 'https://online-price-watch.consumer.org.hk/opw/search/highlight:%E7%89%9B%E5%A5%B6');
 });
+
+import { siteHome } from '../js/sites.js';
+
+test('every site has a home page to fall back on', () => {
+  for (const s of DEFAULT_SITES) assert.match(siteHome(s), /^https:\/\/[^/{}]+\/$/, s.id);
+  assert.equal(siteHome(DEFAULT_SITES.find((s) => s.id === 'fortress')), 'https://www.fortress.com.hk/');
+  assert.equal(siteHome(DEFAULT_SITES.find((s) => s.id === 'amazon-uk')), 'https://www.amazon.co.uk/');
+  assert.equal(siteHome(DEFAULT_SITES.find((s) => s.id === 'sky-hk')), 'https://www.skyscanner.com.hk/');
+});

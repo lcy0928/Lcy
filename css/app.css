@@ -145,6 +145,11 @@ main {
 .small { font-size: 13px; }
 .bad { color: var(--bad); }
 .hint { font-size: 14px; color: var(--ink-2); margin: 18px 0 4px; }
+.need-banner {
+  display: flex; align-items: center; gap: 12px; margin: 18px 0 4px; padding: 12px 14px;
+  background: var(--sold-tint); color: var(--sold-ink); border-radius: var(--radius); font-size: 14px; font-weight: 600;
+}
+.need-banner p { margin: 0; flex: 1; }
 .empty { color: var(--ink-2); padding: 28px 16px; text-align: center; border: 1px dashed var(--line); border-radius: var(--radius); }
 
 /* ---------- surfaces ---------- */
@@ -234,7 +239,6 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--accent);
 .site { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 10px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .site-main { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .site-name { font-weight: 600; }
-.site-need { font-size: 13px; color: var(--ink-3); width: 100%; }
 .site-actions { display: flex; gap: 4px; margin-left: auto; }
 
 .badge {
