@@ -61,6 +61,8 @@ const zh = {
   'how.pricespy': '打開商品頁，撳「價格提醒」(Price alert)', 'how.idealo': '打開商品頁，撳「Preiswecker」',
   'how.ebay': '撳「儲存搜尋」(Save this search)',
   'due.title': '今日要格價', 'due.hint': '以下心水超過 {n} 日未更新價錢。', 'due.go': '去格價',
+  'item.trendFx': '走勢用每個價記錄當日嘅匯率；排名就用今日匯率。',
+  'fx.logged': '記價時匯率：{rates}（{date}）',
   'quote.card': '付款卡', 'quote.overseas': '海外商戶（用港幣付款都會收跨境費）',
 
   'list.title': '心水清單',
@@ -254,6 +256,8 @@ const en = {
   'how.pricespy': 'Open the product, then tap “Price alert”', 'how.idealo': 'Open the product, then tap “Preiswecker”',
   'how.ebay': 'Tap “Save this search”',
   'due.title': 'Due for a price check', 'due.hint': 'These items haven’t had a new price for over {n} days.', 'due.go': 'Check prices',
+  'item.trendFx': 'The trend uses each price’s own exchange rate; the ranking uses today’s.',
+  'fx.logged': 'Rate when logged: {rates} ({date})',
   'quote.card': 'Pay with', 'quote.overseas': 'Overseas merchant (cross-border fee applies even in HKD)',
 
   'list.title': 'Watchlist',

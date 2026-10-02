@@ -2,7 +2,7 @@ import { t, setLang, getLang } from './i18n.js';
 import * as S from './store.js';
 import { state } from './store.js';
 import { CATS, PRODUCT_CATS, REGIONS, KINDS, REGION_CURRENCY, buildUrl } from './sites.js';
-import { CURRENCIES, convert, effectiveRates, fetchRates, fmt, fmtParts } from './currency.js';
+import { CURRENCIES, convert, effectiveRates, fetchRates, fetchRatesOn, fxSnapshot, ratesAt, fmt, fmtParts } from './currency.js';
 import { landed, latestPerSite, rankQuotes, COUNTRIES, REGION_COUNTRY, MODES, DEFAULT_CARD, isOverseas, UNITS, unitPrice, ageDays } from './landed.js';
 import { syncGist, mergeData } from './sync.js';
 import { buildChart, bindChart } from './chart.js';
@@ -395,6 +395,13 @@ function unitLabel(q, total) {
   return u ? `${t('unit.per.' + u.per)} ${money(u.value)}` : '';
 }
 
+function fxNote(q) {
+  if (!q.fx?.hkdPer) return '';
+  const sig = (v) => new Intl.NumberFormat(locale(), { maximumSignificantDigits: 5 }).format(v);
+  const parts = Object.entries(q.fx.hkdPer).map(([c, v]) => `1 ${c} = ${sig(v)} HKD`);
+  return `<p class="fx-note">${esc(t('fx.logged', { rates: parts.join(' · '), date: fmtDate(q.fx.date) }))}</p>`;
+}
+
 function quoteRow({ q, r }, i, { scratch = false, itemId = '', cheapest = NaN } = {}) {
   const href = safeUrl(q.url);
   const mode = q.mode && q.mode !== 'local' ? ` · ${t('modeShort.' + q.mode)}` : '';
@@ -411,7 +418,7 @@ function quoteRow({ q, r }, i, { scratch = false, itemId = '', cheapest = NaN } 
         ${stale ? `<span class="badge stale-badge">${t('age.stale')}</span>` : ''}</div>
       <div class="q-sub">${esc(fmtDate(q.date))}${scratch ? '' : ` (${esc(ageLabel(seenDate(q)))})`} · ${esc(fmt(num(q.price), q.currency, getLang()))}${mode}${q.note ? ` · ${esc(q.note)}` : ''}</div>
       ${unit ? `<div class="q-unit">${esc(unit)}</div>` : ''}
-      <details class="q-details"><summary>${t('item.breakdown')}</summary>${breakdown(r)}</details>
+      <details class="q-details"><summary>${t('item.breakdown')}</summary>${breakdown(r)}${fxNote(q)}</details>
     </div>
     <div class="q-total">${esc(money(r.total))}${i === 0 && scratch ? `<span class="q-best">${t('calc.cheapest')}</span>` : ''}${diff}</div>
     <div class="q-actions">
@@ -439,7 +446,8 @@ function viewItem(id) {
   }
   const target = targetBase(item, c);
 
-  ui.chart = { points: quotes.map((q) => ({ date: q.date, value: landed(q, c).total, site: q.site })), target, base: c.base };
+  // The trend uses each price's own exchange rate; the ranking uses today's.
+  ui.chart = { points: quotes.map((q) => ({ date: q.date, value: landed(q, { ...c, rates: ratesAt(c.rates, q.fx) }).total, site: q.site })), target, base: c.base };
   const distinctDays = new Set(quotes.map((q) => q.date)).size;
 
   return `
@@ -458,6 +466,7 @@ function viewItem(id) {
   </div>
   <section class="card">
     <h2 class="section-h">${t('item.trend')} <small>${t('item.trendSub', { cur: c.base })}</small></h2>
+    ${distinctDays >= 2 ? `<p class="muted small">${t('item.trendFx')}</p>` : ''}
     ${distinctDays >= 2 ? '<div class="chart-wrap"><div class="c-tip" hidden></div></div>' : `<p class="muted">${t('item.trendNeed')}</p>`}
   </section>
   ${alertSection(item, quotes)}
@@ -899,7 +908,21 @@ function saveQuote(form) {
     if (!item.search && cat === state.search.cat) S.updateItem(item.id, { search: searchSnapshot() });
     itemId = item.id;
   }
-  S.upsertQuote(itemId, d.quoteId ? { ...q, id: d.quoteId } : q);
+  const prev = d.quoteId && S.getItem(itemId)?.quotes.find((x) => x.id === d.quoteId);
+  const sameFx = prev?.fx && prev.date === q.date && prev.currency === q.currency && prev.fwdCur === q.fwdCur;
+  const ratesDate = state.rates?.date || localDate();
+  q.fx = sameFx ? prev.fx : fxSnapshot(q, ctx().rates, ratesDate);
+  q.id = d.quoteId || uid();
+  S.upsertQuote(itemId, q);
+  // Back-dated price: swap in that day's exchange rate when we can get it.
+  if (!sameFx && q.fx && q.date < ratesDate && !Object.keys(state.settings.manualRates || {}).some((c) => q.fx.hkdPer[c])) {
+    fetchRatesOn(q.date)
+      .then((r) => {
+        const fx = fxSnapshot(q, r.hkdPer, r.date);
+        if (fx) { S.upsertQuote(itemId, { id: q.id, fx }); softRender(); }
+      })
+      .catch(() => {});
+  }
   toast(t('quote.saved'));
   return true;
 }

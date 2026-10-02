@@ -40,3 +40,24 @@ test('fmt and fmtParts', () => {
   assert.deepEqual(fmtParts(1500, 'EUR', 'en'), { symbol: '€', value: '1,500' });
   assert.equal(fmt(NaN, 'HKD'), '—');
 });
+
+import { fetchRatesOn, fxSnapshot, ratesAt } from '../js/currency.js';
+
+test('fetchRatesOn asks Frankfurter for that date', async () => {
+  let asked;
+  const r = await fetchRatesOn('2026-09-01', async (url) => {
+    asked = url;
+    return { ok: true, json: async () => ({ date: '2026-08-29', rates: { GBP: 0.1 } }) };
+  });
+  assert.match(asked, /2026-09-01/);
+  assert.equal(r.date, '2026-08-29');
+  assert.equal(r.hkdPer.GBP, 10);
+});
+
+test('fxSnapshot keeps only the currencies a quote uses', () => {
+  const rates = { HKD: 1, GBP: 10.4, EUR: 9.1, USD: 7.8 };
+  assert.deepEqual(fxSnapshot({ currency: 'GBP', fwdCur: 'HKD' }, rates, '2026-10-02'), { date: '2026-10-02', hkdPer: { GBP: 10.4 } });
+  assert.equal(fxSnapshot({ currency: 'HKD' }, rates, 'x'), null);
+  assert.equal(ratesAt(rates, { hkdPer: { GBP: 9.9 } }).GBP, 9.9);
+  assert.equal(ratesAt(rates, null).GBP, 10.4);
+});

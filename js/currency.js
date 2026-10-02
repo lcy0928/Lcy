@@ -101,3 +101,33 @@ export function fmtParts(amount, cur, lang = 'zh') {
     return { symbol: cur, value: amount.toFixed(d) };
   }
 }
+
+/** Rates for a past date (Frankfurter keeps ECB history; weekends give the previous working day). */
+export async function fetchRatesOn(date, fetchImpl = fetch) {
+  const urls = [
+    `https://api.frankfurter.dev/v1/${date}?base=HKD`,
+    `https://api.frankfurter.app/${date}?from=HKD`,
+  ];
+  let lastErr;
+  for (const url of urls) {
+    try {
+      const res = await fetchImpl(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const j = await res.json();
+      return { hkdPer: invert(j.rates), date: j.date };
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('no rate source');
+}
+
+/** The rates a quote needs (its currency and forwarding currency), frozen at logging time. */
+export function fxSnapshot(q, hkdPer, date) {
+  const out = {};
+  for (const c of [q.currency, q.fwdCur]) if (c && c !== 'HKD' && hkdPer[c]) out[c] = hkdPer[c];
+  return Object.keys(out).length ? { date, hkdPer: out } : null;
+}
+
+/** Current rates with a quote's frozen ones laid on top. */
+export const ratesAt = (hkdPer, fx) => (fx?.hkdPer ? { ...hkdPer, ...fx.hkdPer } : hkdPer);
