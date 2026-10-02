@@ -5,26 +5,25 @@ import { num } from './util.js';
 
 export const MODES = ['local', 'online', 'taxfree'];
 
-// vat = standard VAT rate %, refund = typical net tourist refund % of the
-// shelf price after operator fees (rough; user can edit per quote).
+// vat = standard VAT rate %; refund = typical net tourist refund % of the shelf
+// price after operator fees (rough, editable per quote); min = minimum spend in
+// one shop for a tax-free form, in the country's currency (0 = no minimum).
 // Great Britain ended tourist VAT refunds on 1 Jan 2021, hence refund 0.
 export const COUNTRIES = {
-  HK: { vat: 0, refund: 0, cur: 'HKD' },
-  GB: { vat: 20, refund: 0, cur: 'GBP' },
-  DE: { vat: 19, refund: 11, cur: 'EUR' },
-  FR: { vat: 20, refund: 12, cur: 'EUR' },
-  IT: { vat: 22, refund: 13, cur: 'EUR' },
-  ES: { vat: 21, refund: 13, cur: 'EUR' },
-  NL: { vat: 21, refund: 12, cur: 'EUR' },
-  BE: { vat: 21, refund: 12, cur: 'EUR' },
-  AT: { vat: 20, refund: 11, cur: 'EUR' },
-  IE: { vat: 23, refund: 12, cur: 'EUR' },
-  PT: { vat: 23, refund: 13, cur: 'EUR' },
-  CH: { vat: 8.1, refund: 5, cur: 'CHF' },
-  US: { vat: 0, refund: 0, cur: 'USD' },
-  JP: { vat: 10, refund: 10, cur: 'JPY' },
-  CN: { vat: 13, refund: 9, cur: 'CNY' },
-  OTHER: { vat: 0, refund: 0, cur: 'USD' },
+  HK: { vat: 0, refund: 0, min: 0, cur: 'HKD' },
+  GB: { vat: 20, refund: 0, min: 0, cur: 'GBP' },
+  DE: { vat: 19, refund: 11, min: 50.01, cur: 'EUR' },
+  FR: { vat: 20, refund: 12, min: 100.01, cur: 'EUR' },
+  IT: { vat: 22, refund: 13, min: 70.01, cur: 'EUR' },
+  ES: { vat: 21, refund: 13, min: 0, cur: 'EUR' },
+  NL: { vat: 21, refund: 12, min: 50, cur: 'EUR' },
+  BE: { vat: 21, refund: 12, min: 125, cur: 'EUR' },
+  AT: { vat: 20, refund: 11, min: 75.01, cur: 'EUR' },
+  IE: { vat: 23, refund: 12, min: 0, cur: 'EUR' },
+  PT: { vat: 23, refund: 13, min: 61.5, cur: 'EUR' },
+  GR: { vat: 24, refund: 13, min: 50, cur: 'EUR' },
+  CH: { vat: 8.1, refund: 5, min: 300, cur: 'CHF' },
+  OTHER: { vat: 0, refund: 0, min: 0, cur: 'USD' },
 };
 
 export const REGION_COUNTRY = { HK: 'HK', UK: 'GB', EU: 'DE', GLOBAL: 'OTHER' };
@@ -50,8 +49,9 @@ export function cardFeePct(q, card, ctx) {
 export const cardFeeFor = (q, ctx) => cardFeePct(q, cardsOf(ctx)[0], ctx);
 
 /**
- * @param q   quote: { price, currency, region, overseas, shipping, fees, fwd, fwdCur, mode,
- *                     removeVat, vatRate, refundPct, dutyPct, cardId }
+ * @param q   quote: { price, currency, region, overseas, country, shipping, fees, mode,
+ *                     removeVat, vatRate, refundPct, dutyPct, cardId,
+ *                     shipTo ('hk'|'fwd'), weight, fwdRate, fwd, fwdCur }
  * @param ctx { base, cardCurrency, cards, rates }  rates = hkdPer map
  * @returns { lines: [{k, v, cur, pct?, card?}], total, cur, card }  total in ctx.base
  */
@@ -63,7 +63,9 @@ export function landed(q, ctx) {
   const lines = [{ k: 'price', v: price, cur }];
 
   let goods = price;
-  if (q.mode === 'online' && q.removeVat && num(q.vatRate) > 0) {
+  const toForwarder = q.mode === 'online' && q.shipTo === 'fwd';
+  // Delivered to a forwarder's local warehouse it is a domestic sale, so VAT stays.
+  if (q.mode === 'online' && !toForwarder && q.removeVat && num(q.vatRate) > 0) {
     goods = price / (1 + num(q.vatRate) / 100);
     lines.push({ k: 'vatRemoved', v: goods - price, cur });
   }
@@ -75,8 +77,15 @@ export function landed(q, ctx) {
 
   let refund = 0;
   if (q.mode === 'taxfree' && num(q.refundPct) > 0) {
-    refund = (price * num(q.refundPct)) / 100;
-    lines.push({ k: 'taxRefund', v: -refund, cur });
+    const c = COUNTRIES[q.country];
+    // The minimum is set in the country's own currency.
+    const priceThere = c ? convert(price, cur, c.cur, ctx.rates) : price;
+    if (c && c.min && priceThere < c.min) {
+      lines.push({ k: 'belowMin', v: 0, cur: c.cur, min: c.min });
+    } else {
+      refund = (price * num(q.refundPct)) / 100;
+      lines.push({ k: 'taxRefund', v: -refund, cur });
+    }
   }
 
   let duty = 0;
@@ -98,7 +107,9 @@ export function landed(q, ctx) {
 
   let total = convert(charged - refund + duty + cardFee - cashback, cur, ctx.base, ctx.rates);
 
-  const fwd = num(q.fwd);
+  // Forwarding: weight × rate per kg (when shipped to a forwarder) plus any fixed amount.
+  const byWeight = toForwarder ? num(q.weight) * num(q.fwdRate) : 0;
+  const fwd = byWeight + num(q.fwd);
   if (fwd) {
     const fwdCur = q.fwdCur || ctx.cardCurrency || 'HKD';
     lines.push({ k: 'forwarding', v: fwd, cur: fwdCur });
@@ -125,4 +136,24 @@ export function rankQuotes(quotes, ctx) {
   return quotes
     .map((q) => ({ q, r: landed(q, ctx) }))
     .sort((a, b) => (Number.isFinite(a.r.total) ? a.r.total : Infinity) - (Number.isFinite(b.r.total) ? b.r.total : Infinity));
+}
+
+// ---- unit price ----
+export const UNITS = ['g', 'kg', 'ml', 'l', 'pcs'];
+const UNIT_BASE = { g: ['100g', 0.01], kg: ['100g', 10], ml: ['100ml', 0.01], l: ['100ml', 10], pcs: ['pc', 1] };
+
+/** Price per 100 g / 100 ml / piece. Returns null without a usable quantity. */
+export function unitPrice(total, qty, unit) {
+  const u = UNIT_BASE[unit];
+  const n = num(qty);
+  if (!u || !(n > 0) || !Number.isFinite(total)) return null;
+  return { per: u[0], value: total / (n * u[1]) };
+}
+
+// ---- freshness ----
+export function ageDays(date, today = new Date()) {
+  if (!date) return Infinity;
+  const d = new Date(date + 'T00:00:00');
+  const t = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  return Math.round((t - d) / 86400000);
 }

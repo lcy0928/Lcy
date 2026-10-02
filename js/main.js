@@ -3,7 +3,7 @@ import * as S from './store.js';
 import { state } from './store.js';
 import { CATS, PRODUCT_CATS, REGIONS, KINDS, REGION_CURRENCY, buildUrl } from './sites.js';
 import { CURRENCIES, convert, effectiveRates, fetchRates, fmt, fmtParts } from './currency.js';
-import { landed, latestPerSite, rankQuotes, COUNTRIES, REGION_COUNTRY, MODES, DEFAULT_CARD, isOverseas } from './landed.js';
+import { landed, latestPerSite, rankQuotes, COUNTRIES, REGION_COUNTRY, MODES, DEFAULT_CARD, isOverseas, UNITS, unitPrice, ageDays } from './landed.js';
 import { syncGist, mergeData } from './sync.js';
 import { buildChart, bindChart } from './chart.js';
 import { esc, num, uid, localDate, addDays, safeUrl } from './util.js';
@@ -15,7 +15,7 @@ const main = $('#main');
 const dlg = $('#dlg');
 
 // View-only UI state (not persisted)
-const ui = { listCat: 'all', showAll: false, siteCat: 'all', conv: { amt: '100', cur: 'GBP' }, chart: null, dialog: null };
+const ui = { listCat: 'all', showAll: false, sortUnit: false, siteCat: 'all', conv: { amt: '100', cur: 'GBP' }, chart: null, dialog: null };
 let installPrompt = null;
 
 const ctx = () => ({
@@ -275,6 +275,7 @@ function priceTag(best, item, c, second) {
       : `<span>${t('item.aboveTarget', { amt: esc(money(best.r.total - target)) })}</span>`);
   }
   if (second) notes.push(`<span>${t('item.cheaperBy', { amt: esc(money(second.r.total - best.r.total)) })}</span>`);
+  if (isStale(best.q)) notes.push(`<span class="warn-text">${t('item.staleBest', { n: ageDays(best.q.date) })}</span>`);
   return `<div class="tag-wrap">
     <div class="price-tag">
       <span class="tag-label">${t('list.best')}</span>
@@ -286,8 +287,20 @@ function priceTag(best, item, c, second) {
 }
 
 function breakdown(r, withTotal = true) {
-  return `<table class="breakdown">${r.lines.map((l) => `<tr><th>${esc(t('line.' + l.k, { pct: l.pct, card: l.card || t('card.default') }))}</th><td>${esc(fmt(l.v, l.cur, getLang()))}</td></tr>`).join('')}
+  return `<table class="breakdown">${r.lines.map((l) => `<tr${l.k === 'belowMin' ? ' class="warn"' : ''}><th>${esc(t('line.' + l.k, { pct: l.pct, card: l.card || t('card.default'), min: l.min ? fmt(l.min, l.cur, getLang()) : '' }))}</th><td>${l.k === 'belowMin' ? '' : esc(fmt(l.v, l.cur, getLang()))}</td></tr>`).join('')}
     ${withTotal ? `<tr class="total"><th>${t('line.total')}</th><td>${esc(money(r.total))}</td></tr>` : ''}</table>`;
+}
+
+function ageLabel(date) {
+  const n = ageDays(date);
+  if (!Number.isFinite(n) || n < 0) return '';
+  return n === 0 ? t('age.today') : t('age.days', { n });
+}
+const isStale = (q) => ageDays(q.date) > num(state.settings.staleDays, 7);
+
+function unitLabel(q, total) {
+  const u = unitPrice(total, q.qty, q.unit);
+  return u ? `${t('unit.per.' + u.per)} ${money(u.value)}` : '';
 }
 
 function quoteRow({ q, r }, i, { scratch = false, itemId = '', cheapest = NaN } = {}) {
@@ -295,13 +308,17 @@ function quoteRow({ q, r }, i, { scratch = false, itemId = '', cheapest = NaN } 
   const mode = q.mode && q.mode !== 'local' ? ` · ${t('modeShort.' + q.mode)}` : '';
   const diff = scratch && i > 0 && Number.isFinite(cheapest) ? `<span class="q-diff">${t('calc.more', { amt: esc(money(r.total - cheapest)) })}</span>` : '';
   const ids = `data-id="${esc(q.id)}" data-item="${esc(itemId)}"${scratch ? ' data-scratch="1"' : ''}`;
-  return `<li class="quote${i === 0 ? ' is-best' : ''}">
+  const stale = !scratch && isStale(q);
+  const unit = unitLabel(q, r.total);
+  return `<li class="quote${i === 0 ? ' is-best' : ''}${stale ? ' stale' : ''}">
     <span class="q-rank" aria-hidden="true">${i + 1}</span>
     <div class="q-body">
       <div class="q-top"><span class="q-site">${esc(q.site || '—')}</span>
         ${q.region ? `<span class="badge">${t('region.' + q.region)}</span>` : ''}
-        ${q.cond === 'used' ? `<span class="badge kind-used">${t('cond.used')}</span>` : ''}</div>
-      <div class="q-sub">${esc(fmtDate(q.date))} · ${esc(fmt(num(q.price), q.currency, getLang()))}${mode}${q.note ? ` · ${esc(q.note)}` : ''}</div>
+        ${q.cond === 'used' ? `<span class="badge kind-used">${t('cond.used')}</span>` : ''}
+        ${stale ? `<span class="badge stale-badge">${t('age.stale')}</span>` : ''}</div>
+      <div class="q-sub">${esc(fmtDate(q.date))}${scratch ? '' : ` (${esc(ageLabel(q.date))})`} · ${esc(fmt(num(q.price), q.currency, getLang()))}${mode}${q.note ? ` · ${esc(q.note)}` : ''}</div>
+      ${unit ? `<div class="q-unit">${esc(unit)}</div>` : ''}
       <details class="q-details"><summary>${t('item.breakdown')}</summary>${breakdown(r)}</details>
     </div>
     <div class="q-total">${esc(money(r.total))}${i === 0 && scratch ? `<span class="q-best">${t('calc.cheapest')}</span>` : ''}${diff}</div>
@@ -320,7 +337,14 @@ function viewItem(id) {
   const c = ctx();
   const quotes = S.liveQuotes(item);
   const { best, second } = bestOf(item, c);
-  const shown = rankQuotes(ui.showAll ? quotes : latestPerSite(quotes), c);
+  let shown = rankQuotes(ui.showAll ? quotes : latestPerSite(quotes), c);
+  const withUnit = shown.filter((x) => unitPrice(x.r.total, x.q.qty, x.q.unit));
+  const unitPers = new Set(withUnit.map((x) => unitPrice(x.r.total, x.q.qty, x.q.unit).per));
+  const canUnit = withUnit.length >= 2 && unitPers.size === 1;
+  if (canUnit && ui.sortUnit) {
+    const uv = (x) => unitPrice(x.r.total, x.q.qty, x.q.unit)?.value ?? Infinity;
+    shown = [...shown].sort((a, b) => uv(a) - uv(b));
+  }
   const target = targetBase(item, c);
 
   ui.chart = { points: quotes.map((q) => ({ date: q.date, value: landed(q, c).total, site: q.site })), target, base: c.base };
@@ -348,6 +372,7 @@ function viewItem(id) {
     <div class="section-bar">
       <h2 class="section-h">${t('item.quotes')} <small>${quotes.length}</small></h2>
       ${quotes.length ? `<div class="chips small" role="radiogroup">${chip('showAll', '0', t('item.latest'), !ui.showAll)}${chip('showAll', '1', t('item.all'), ui.showAll)}</div>` : ''}
+      ${canUnit ? `<div class="chips small" role="radiogroup">${chip('sortUnit', '0', t('item.sortTotal'), !ui.sortUnit)}${chip('sortUnit', '1', t('item.sortUnit'), ui.sortUnit)}</div>` : ''}
     </div>
     ${shown.length ? `<ol class="quotes">${shown.map((x, i) => quoteRow(x, i, { itemId: item.id })).join('')}</ol>` : `<p class="empty">${t('item.noQuotes')}</p>`}
   </section>`;
@@ -481,6 +506,7 @@ function viewSettings() {
       ${field(t('set.lang'), `<select data-set="lang">${opt('zh', '中文（香港）', st.lang === 'zh')}${opt('en', 'English', st.lang === 'en')}</select>`)}
       ${field(t('set.base'), `<select data-set="base">${curOptions(st.base)}</select>`)}
       ${field(t('set.cardCur'), `<select data-set="cardCurrency">${curOptions(st.cardCurrency)}</select>`)}
+      ${field(t('set.staleDays'), `<input type="number" min="1" step="1" inputmode="numeric" data-set="staleDays" value="${esc(st.staleDays ?? 7)}">`)}
     </div>
     ${installPrompt ? `<button type="button" class="btn" data-act="install">${t('set.install')}</button>` : ''}
   </section>
@@ -491,6 +517,13 @@ function viewSettings() {
     </div>
     <p class="muted small">${t('card.hint')}</p>
     ${cardRows()}
+  </section>
+  <section class="card">
+    <h2 class="section-h">${t('set.fwd')} <small>HKD / kg</small></h2>
+    <div class="grid-3 tight">
+      ${['UK', 'EU', 'GLOBAL'].map((r) => field(t('region.' + r), `<input type="number" min="0" step="any" inputmode="decimal" data-fwd="${r}" value="${esc(st.fwdRates?.[r] ?? '')}">`)).join('')}
+    </div>
+    <p class="muted small">${t('set.fwdHint')}</p>
   </section>
   <section class="card">
     <div class="section-bar">
@@ -560,8 +593,9 @@ function defaultQuote(preset = {}) {
   return {
     site: '', region, cond: 'new', price: '', currency: REGION_CURRENCY[region], mode, country,
     removeVat: mode === 'online' && (region === 'UK' || region === 'EU'),
-    vatRate: cp.vat, refundPct: cp.refund, shipping: '', fees: '', fwd: '', fwdCur: state.settings.cardCurrency,
+    vatRate: cp.vat, refundPct: cp.refund, shipping: '', fees: '', fwd: '',
     dutyPct: '', cardId: '', url: '', date: localDate(), note: '',
+    shipTo: 'hk', weight: '', fwdRate: state.settings.fwdRates?.[region] ?? '', fwdCur: 'HKD', qty: '', unit: 'g',
     ...preset,
   };
 }
@@ -571,7 +605,7 @@ function quoteFormHtml(q, { needName, itemName, editing, refresh }) {
   const siteNames = [...new Set(S.getSites({ includeDisabled: true }).map((s) => s.name))].map((n) => `<option value="${esc(n)}">`).join('');
   const countries = Object.keys(COUNTRIES).map((k) => opt(k, k === 'OTHER' ? '—' : k, k === q.country)).join('');
   const numIn = (name, val, extra = '') => `<input type="number" name="${name}" step="any" inputmode="decimal" value="${esc(val)}" ${extra}>`;
-  return `<form method="dialog" class="dlg-form quote-form" data-form="quote" data-mode="${esc(q.mode)}" novalidate>
+  return `<form method="dialog" class="dlg-form quote-form" data-form="quote" data-mode="${esc(q.mode)}" data-ship="${q.shipTo === 'fwd' ? 'fwd' : 'hk'}" novalidate>
     <header class="dlg-head"><h2>${editing ? t('quote.editTitle') : refresh ? t('quote.refreshTitle') : t('quote.title')}</h2>
       <button type="button" class="icon-btn" data-act="dlg-close" aria-label="${esc(t('close'))}">✕</button></header>
     <div class="dlg-body">
@@ -589,13 +623,26 @@ function quoteFormHtml(q, { needName, itemName, editing, refresh }) {
         ${field(t('quote.currency'), `<select name="currency">${curOptions(q.currency)}</select>`)}
         ${field(t('quote.cond'), `<select name="cond">${opt('new', t('cond.new'), q.cond !== 'used')}${opt('used', t('cond.used'), q.cond === 'used')}</select>`)}
       </div>
+      <div class="qty-row">
+        ${field(t('quote.qty'), numIn('qty', q.qty, 'min="0"'))}
+        ${field(t('quote.unit'), `<select name="unit">${UNITS.map((u) => opt(u, t('unit.' + u), u === (q.unit || 'g'))).join('')}</select>`)}
+      </div>
       ${field(t('quote.mode'), `<select name="mode">${MODES.map((m) => opt(m, t('mode.' + m), m === q.mode)).join('')}</select>`)}
       <div class="only-abroad grid-2">
         ${field(t('quote.country'), `<select name="country">${countries}</select>`)}
         <div class="only-online">${field(t('quote.vat'), numIn('vatRate', q.vatRate, 'min="0"'))}</div>
         <div class="only-taxfree">${field(t('quote.refund'), numIn('refundPct', q.refundPct, 'min="0"'))}</div>
       </div>
-      <label class="check only-online"><input type="checkbox" name="removeVat"${q.removeVat ? ' checked' : ''}> ${t('quote.removeVat')}</label>
+      <div class="only-online">${field(t('quote.shipTo'), `<select name="shipTo">${opt('hk', t('ship.hk'), q.shipTo !== 'fwd')}${opt('fwd', t('ship.fwd'), q.shipTo === 'fwd')}</select>`)}</div>
+      <label class="check only-online only-direct"><input type="checkbox" name="removeVat"${q.removeVat ? ' checked' : ''}> ${t('quote.removeVat')}</label>
+      <div class="only-online only-fwd">
+        <div class="grid-3">
+          ${field(t('quote.weight'), numIn('weight', q.weight, 'min="0" placeholder="1.0"'))}
+          ${field(t('quote.fwdRate'), numIn('fwdRate', q.fwdRate, 'min="0"'))}
+          ${field(t('quote.currency'), `<select name="fwdCur">${curOptions(q.fwdCur || 'HKD')}</select>`)}
+        </div>
+        <p class="muted small">${t('quote.fwdHint')}</p>
+      </div>
       <p class="muted small only-taxfree">${t('quote.refundHint')}</p>
       <div class="grid-2">
         ${field(t('quote.shipping'), numIn('shipping', q.shipping, 'min="0"'))}
@@ -605,7 +652,6 @@ function quoteFormHtml(q, { needName, itemName, editing, refresh }) {
         <summary>${t('quote.more')}</summary>
         <div class="grid-2">
           ${field(t('quote.fwd'), numIn('fwd', q.fwd, 'min="0"'))}
-          ${field(t('quote.currency'), `<select name="fwdCur">${curOptions(q.fwdCur || state.settings.cardCurrency)}</select>`)}
           <div class="only-online">${field(`${t('quote.duty')} <span class="muted">· ${t('quote.dutyHint')}</span>`, numIn('dutyPct', q.dutyPct, 'min="0" placeholder="0"'))}</div>
           ${field(t('quote.card'), `<select name="cardId">${opt('', t('card.auto'), !q.cardId)}${state.settings.cards.map((c) => opt(c.id, cardName(c), c.id === q.cardId)).join('')}</select>`)}
           ${field(t('quote.date'), `<input type="date" name="date" value="${esc(q.date)}">`)}
@@ -641,6 +687,11 @@ function readQuoteForm(form) {
     fwd: numOrBlank('fwd'),
     fwdCur: f.fwdCur.value,
     dutyPct: numOrBlank('dutyPct'),
+    shipTo: f.shipTo.value,
+    weight: numOrBlank('weight'),
+    fwdRate: numOrBlank('fwdRate'),
+    qty: numOrBlank('qty'),
+    unit: f.unit.value,
     cardId: f.cardId.value,
     overseas: f.overseas.checked,
     cardFeePct: '',
@@ -653,6 +704,7 @@ function readQuoteForm(form) {
 function updateQuotePreview(form) {
   const q = readQuoteForm(form);
   form.dataset.mode = q.mode;
+  form.dataset.ship = q.shipTo;
   const out = $('#q-preview', form);
   if (q.price === '') { out.innerHTML = ''; return; }
   const r = landed(q, ctx());
@@ -879,6 +931,7 @@ const actions = {
     } else if (group === 'cond') { s.cond = v; S.save(); }
     else if (group === 'listCat') ui.listCat = v;
     else if (group === 'showAll') ui.showAll = v === '1';
+    else if (group === 'sortUnit') ui.sortUnit = v === '1';
     if (group === 'region' || group === 'cond') {
       $$(`.chip[data-group="${group}"]`).forEach((c) => {
         const on = group === 'region' ? s.regions.includes(c.dataset.v) : c.dataset.v === v;
@@ -1067,8 +1120,12 @@ document.addEventListener('change', async (e) => {
   if (el.dataset.set) {
     const key = el.dataset.set;
     if (key === 'sync.auto') { state.sync.auto = el.checked; S.save(); return; }
-    S.setSetting(key, el.value);
+    S.setSetting(key, key === 'staleDays' ? Math.max(1, Math.round(num(el.value, 7))) : el.value);
     render();
+    return;
+  }
+  if (el.dataset.fwd) {
+    S.setSetting('fwdRates', { ...(state.settings.fwdRates || {}), [el.dataset.fwd]: el.value === '' ? '' : num(el.value) });
     return;
   }
   if (el.dataset.card && el.dataset.k) {
@@ -1107,7 +1164,11 @@ document.addEventListener('change', async (e) => {
         form.elements.country.dispatchEvent(new Event('change', { bubbles: true }));
       }
     }
-    if (el.name === 'region') form.elements.overseas.checked = el.value !== 'HK';
+    if (el.name === 'region') {
+      form.elements.overseas.checked = el.value !== 'HK';
+      const rate = state.settings.fwdRates?.[el.value];
+      if (rate !== undefined && rate !== '') form.elements.fwdRate.value = rate;
+    }
     if (el.name === 'url') {
       const url = extractUrl(el.value);
       if (url) applyDetection(form, detectFromUrl(url, S.getSites({ includeDisabled: true })));

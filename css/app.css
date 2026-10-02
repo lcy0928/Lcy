@@ -311,6 +311,13 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--accent);
 .q-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .q-site { font-weight: 700; }
 .q-sub { font-size: 13px; color: var(--ink-3); margin-top: 2px; }
+.q-unit { font-size: 13px; font-weight: 600; color: var(--ink-2); margin-top: 2px; }
+.quote.stale .q-total, .quote.stale .q-site { opacity: 0.55; }
+.badge.stale-badge { background: var(--sold-tint); color: var(--sold-ink); }
+.warn-text { color: var(--sold-ink); }
+.breakdown tr.warn th { color: var(--sold-ink); }
+.qty-row { display: grid; grid-template-columns: 1fr 96px; gap: 12px; }
+.grid-3.tight { margin-top: 0; grid-template-columns: repeat(3, 1fr); }
 .q-total {
   font-family: var(--display); font-stretch: 75%; font-weight: 800; font-size: 22px; line-height: 1.1;
   text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;
@@ -385,6 +392,8 @@ dialog::backdrop { background: rgb(13 20 26 / 0.45); }
 .cats-set { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0 16px; }
 .cats-set legend { margin-bottom: 4px; }
 
+.quote-form[data-ship='fwd'] .only-direct,
+.quote-form:not([data-ship='fwd']) .only-fwd,
 .quote-form[data-mode='local'] .only-abroad,
 .quote-form:not([data-mode='online']) .only-online,
 .quote-form:not([data-mode='taxfree']) .only-taxfree { display: none; }

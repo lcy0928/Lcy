@@ -16,6 +16,9 @@ function defaults() {
       base: 'HKD',
       cardCurrency: 'HKD',
       cards: [{ ...DEFAULT_CARD }],
+      staleDays: 7,
+      // Forwarder price per kg in HKD, by warehouse region (Buy&Ship UK ≈ HK$25/lb in 2026).
+      fwdRates: { UK: 55, EU: '', GLOBAL: '' },
       manualRates: {},
       updatedAt: 0,
     },
