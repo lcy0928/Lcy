@@ -1,7 +1,8 @@
 import { t, setLang, getLang } from './i18n.js';
 import * as S from './store.js';
 import { state } from './store.js';
-import { CATS, PRODUCT_CATS, REGIONS, KINDS, REGION_CURRENCY, buildUrl, siteHome } from './sites.js';
+import { CATS, PRODUCT_CATS, REGIONS, KINDS, REGION_CURRENCY, buildUrl, siteHome, siteLang } from './sites.js';
+import { LANGS, LANG_LABEL, detectLang, translate, translateSync, sampleTerm } from './translate.js';
 import { CURRENCIES, convert, effectiveRates, fetchRates, fetchRatesOn, fxSnapshot, ratesAt, fmt, fmtParts } from './currency.js';
 import { landed, latestPerSite, rankQuotes, COUNTRIES, REGION_COUNTRY, MODES, DEFAULT_CARD, isOverseas, UNITS, unitPrice, ageDays } from './landed.js';
 import { syncGist, mergeData } from './sync.js';
@@ -145,6 +146,7 @@ function searchFields() {
   }
   if (s.cat === 'hotel') {
     return `${field(t('search.city'), inp('city', 'text', `placeholder="${esc(t('search.cityPh'))}" autocomplete="off"`))}
+    <div class="tr-row" id="tr-row">${trRow()}</div>
     <div class="grid-3">
       ${field(t('search.checkin'), inp('checkin', 'date'))}
       ${field(t('search.checkout'), inp('checkout', 'date'))}
@@ -152,7 +154,8 @@ function searchFields() {
     </div>`;
   }
   return field(t('search.keyword'), `<div class="kw-row">${inp('q', 'search', `placeholder="${esc(t('search.keywordPh'))}" enterkeyhint="search" autocomplete="off"`)}
-    <button type="button" class="btn scan-btn" data-act="scan" aria-label="${esc(t('scan.button'))}" title="${esc(t('scan.button'))}">${icon('barcode')}</button></div>`, 'field-big');
+    <button type="button" class="btn scan-btn" data-act="scan" aria-label="${esc(t('scan.button'))}" title="${esc(t('scan.button'))}">${icon('barcode')}</button></div>`, 'field-big')
+    + `<div class="tr-row" id="tr-row">${trRow()}</div>`;
 }
 
 function viewSearch() {
@@ -182,6 +185,111 @@ function searchParams() {
   return { q: s.q, from: s.from, to: s.to, depart: s.depart, ret: s.ret, oneway: s.oneway, city: s.city, checkin: s.checkin, checkout: s.checkout, adults: s.adults };
 }
 
+// ---- keyword translation ----
+// tr = { text, src, out: {lang: {text, ok}}, pending: Set } for the keyword or city being searched.
+const tr = { text: '', src: 'en', out: {}, pending: new Set() };
+let trTimer;
+const autoTr = () => state.settings.autoTranslate !== false;
+
+// What is translated: the product keyword, or the city for hotels.
+const trSource = () => (state.search.cat === 'hotel' ? state.search.city : state.search.cat === 'flight' ? '' : state.search.q).trim();
+
+function sitesShown() {
+  const s = state.search;
+  return S.getSites().filter((x) => x.cats.includes(s.cat) && s.regions.includes(x.region) && condOk(x.kind));
+}
+
+// Languages the visible sites search in (hotel sites all take English city names).
+function langsNeeded() {
+  if (state.search.cat === 'hotel') return ['en'];
+  return [...new Set(sitesShown().map(siteLang))];
+}
+
+/** The keyword (or city) to use in `lang`: your own edit, else the translation, else as typed. */
+function termFor(lang) {
+  const text = trSource();
+  if (!text || !autoTr()) return text;
+  const src = detectLang(text);
+  if (lang === src) return text;
+  const edits = state.search.trEdits;
+  if (edits?.text === text && edits.map?.[lang]) return edits.map[lang];
+  if (tr.text === text && tr.out[lang]) return tr.out[lang].text;
+  return translateSync(text, src, lang) ?? text;
+}
+
+/** Search parameters for one site, with the keyword in the site's language. */
+function paramsFor(site) {
+  const p = searchParams();
+  if (state.search.cat === 'hotel') p.city = termFor('en');
+  else p.q = termFor(siteLang(site));
+  return p;
+}
+
+// Translate the current keyword into every language the visible sites need.
+function scheduleTranslation(delay = 450) {
+  clearTimeout(trTimer);
+  trTimer = setTimeout(runTranslation, delay);
+}
+
+async function runTranslation() {
+  const text = trSource();
+  if (!text || !autoTr()) { refreshResults(); return; }
+  const src = detectLang(text);
+  if (tr.text !== text) Object.assign(tr, { text, src, out: {}, pending: new Set() });
+  const todo = langsNeeded().filter((l) => l !== src && !tr.out[l]);
+  for (const l of todo) {
+    const quick = translateSync(text, src, l);
+    if (quick !== null) tr.out[l] = { text: quick, ok: true };
+    else tr.pending.add(l);
+  }
+  refreshResults();
+  for (const l of [...tr.pending]) {
+    const r = await translate(text, src, l);
+    if (tr.text !== text) return; // keyword changed meanwhile
+    tr.out[l] = r;
+    tr.pending.delete(l);
+    refreshResults();
+  }
+}
+
+function refreshResults() {
+  const res = $('#results');
+  if (res) res.innerHTML = searchResults();
+  const row = $('#tr-row');
+  if (row) row.innerHTML = trRow();
+}
+
+// Show only what changed: "Comandante C40 Handkaffeemühle" → "Handkaffeemühle".
+function shortLabel(original, translated) {
+  const a = original.split(' ');
+  const b = translated.split(' ');
+  let i = 0;
+  while (i < a.length - 0 && i < b.length - 1 && a[i] === b[i]) i++;
+  let j = 0;
+  while (j < a.length - i && j < b.length - i - 1 && a[a.length - 1 - j] === b[b.length - 1 - j]) j++;
+  return b.slice(i, b.length - j).join(' ');
+}
+
+function trRow() {
+  const text = trSource();
+  const isHotel = state.search.cat === 'hotel';
+  const toggle = `<label class="check tr-toggle"><input type="checkbox" data-set="autoTranslate"${autoTr() ? ' checked' : ''}> ${t(isHotel ? 'tr.autoCity' : 'tr.auto')}</label>`;
+  if (!text || !autoTr()) return toggle;
+  const src = detectLang(text);
+  const langs = langsNeeded().filter((l) => l !== src);
+  if (!langs.length) return toggle;
+  const chips = langs.map((l) => {
+    const pending = tr.text === text && tr.pending.has(l);
+    const failed = tr.text === text && tr.out[l] && !tr.out[l].ok;
+    const edited = state.search.trEdits?.text === text && state.search.trEdits.map?.[l];
+    const label = pending ? t('tr.pending') : shortLabel(text, termFor(l));
+    return `<button type="button" class="tr-chip${failed ? ' failed' : ''}${edited ? ' edited' : ''}" data-act="tr-edit" data-lang="${l}" title="${esc(termFor(l))}" aria-label="${esc(`${t('lang.' + l)}: ${termFor(l)}. ${t('tr.editHint')}`)}">
+      <span class="tr-lang">${LANG_LABEL[l]}</span><span class="tr-text" lang="${l === 'zh' ? 'zh-HK' : l}">${esc(label)}</span>${failed ? ' ⚠' : ''}</button>`;
+  }).join('');
+  const anyFailed = langs.some((l) => tr.text === text && tr.out[l] && !tr.out[l].ok);
+  return `${toggle}<div class="tr-chips">${chips}</div>${anyFailed ? `<p class="muted small">${t('tr.failed')}</p>` : ''}`;
+}
+
 const MISSING_LABEL = {
   q: 'search.kw', q_plus: 'search.kw', q_dash: 'search.kw',
   from: 'search.from', from_l: 'search.from', to: 'search.to', to_l: 'search.to',
@@ -192,7 +300,7 @@ const MISSING_LABEL = {
 function searchResults() {
   const s = state.search;
   const params = searchParams();
-  const sites = S.getSites().filter((x) => x.cats.includes(s.cat) && s.regions.includes(x.region) && condOk(x.kind));
+  const sites = sitesShown();
   if (!sites.length) return `<p class="empty">${t('search.empty')}</p>`;
   const groups = REGIONS.filter((r) => s.regions.includes(r))
     .map((r) => [r, sites.filter((x) => x.region === r)])
@@ -206,7 +314,7 @@ function searchResults() {
   return `${opwPanel()}${banner}${groups.map(([r, list]) => `
     <section class="region">
       <h2 class="region-h"><span>${t('region.' + r)}</span><small>${t('search.count', { n: list.length })}</small></h2>
-      <ul class="sites">${list.map((site) => siteRow(site, params)).join('')}</ul>
+      <ul class="sites">${list.map((site) => siteRow(site, paramsFor(site))).join('')}</ul>
     </section>`).join('')}`;
 }
 
@@ -214,7 +322,9 @@ function opwPanel() {
   const s = state.search;
   if (s.cat !== 'grocery' || !opw || !s.q.trim() || !s.regions.includes('HK')) return '';
   const lang = getLang();
-  const hits = searchOpw(opw, s.q, 8);
+  let hits = searchOpw(opw, s.q, 8);
+  // Consumer Council names are in Chinese and English: try the other language too.
+  if (!hits.length) hits = searchOpw(opw, termFor(detectLang(s.q) === 'zh' ? 'en' : 'zh'), 8);
   const rows = hits.map((p) => {
     const cheapest = p.prices[0];
     const table = p.prices.map((x) => {
@@ -503,7 +613,8 @@ function alertSection(item, quotes) {
   const sites = S.getSites({ includeDisabled: true });
   const rows = list.map((a, i) => {
     const site = a.site && sites.find((s) => s.id === a.site);
-    const built = site ? buildUrl(site.url, params) : { url: a.url, missing: [] };
+    const q = params.q && site ? translateSync(params.q, detectLang(params.q), siteLang(site)) ?? params.q : params.q;
+    const built = site ? buildUrl(site.url, { ...params, q }) : { url: a.url, missing: [] };
     const href = built.missing.length ? '' : safeUrl(built.url);
     if (!href) return '';
     const name = site ? site.name : a.name;
@@ -708,11 +819,11 @@ function viewSettings() {
 }
 
 // ---------- link test ----------
-const TEST_Q = { coffee: 'Comandante C40', home: 'towel', grocery: 'milk', electronics: 'iPad', other: 'Lego' };
+const TEST_Q = { coffee: '磨豆機', home: '毛巾', grocery: '牛奶', electronics: '耳機', other: '行李箱' };
 
-function testParams(cat) {
+function testParams(cat, lang = 'en') {
   const depart = addDays(localDate(), 30);
-  return { q: TEST_Q[cat] || 'coffee', from: 'HKG', to: 'LHR', depart, ret: addDays(depart, 14), city: 'London', checkin: depart, checkout: addDays(depart, 2), adults: 2 };
+  return { q: sampleTerm(TEST_Q[cat] || '咖啡', lang), from: 'HKG', to: 'LHR', depart, ret: addDays(depart, 14), city: 'London', checkin: depart, checkout: addDays(depart, 2), adults: 2 };
 }
 
 function testSites() {
@@ -725,7 +836,7 @@ function viewLinkTest() {
   const bad = sites.filter((s) => s.check === 'bad').length;
   const rows = sites.map((s) => {
     const cat = ui.testCat === 'all' ? s.cats[0] : ui.testCat;
-    const href = safeUrl(buildUrl(s.url, testParams(cat)).url);
+    const href = safeUrl(buildUrl(s.url, testParams(cat, siteLang(s))).url);
     return `<li class="test-row${s.check ? ' is-' + s.check : ''}">
       <div class="test-info">
         <span class="site-name">${esc(s.name)}</span>
@@ -1087,6 +1198,7 @@ function openSiteDialog(site) {
         ${field(t('siteDlg.region'), `<select name="region"${dis}>${REGIONS.map((r) => opt(r, t('region.' + r), r === s.region)).join('')}</select>`)}
         ${field(t('siteDlg.kind'), `<select name="kind"${dis}>${KINDS.map((k) => opt(k, t('kind.' + k), k === s.kind)).join('')}</select>`)}
         ${field(t('siteDlg.cur'), `<select name="cur"${dis}>${opt('', '—', !s.cur)}${curOptions(s.cur)}</select>`)}
+        ${field(t('siteDlg.lang'), `<select name="lang">${LANGS.map((l) => opt(l, t('lang.' + l), l === siteLang(s))).join('')}</select>`)}
       </div>
       <fieldset class="cats-set"${dis}><legend class="field-label">${t('siteDlg.cats')}</legend>
         ${CATS.map((c) => `<label class="check"><input type="checkbox" name="cats" value="${c}"${s.cats.includes(c) ? ' checked' : ''}> ${t('cat.' + c)}</label>`).join('')}
@@ -1112,10 +1224,10 @@ function saveSite(form) {
   if (!name) { f.name.focus(); return false; }
   const enabled = f.enabled.checked;
   if (ui.dialog.builtin) {
-    S.updateSite(ui.dialog.siteId, { name, url, enabled });
+    S.updateSite(ui.dialog.siteId, { name, url, enabled, lang: f.lang.value });
   } else {
     const cats = $$('input[name=cats]:checked', form).map((x) => x.value);
-    const data = { name, url, enabled, region: f.region.value, kind: f.kind.value, cur: f.cur.value, cats: cats.length ? cats : ['other'] };
+    const data = { name, url, enabled, lang: f.lang.value, region: f.region.value, kind: f.kind.value, cur: f.cur.value, cats: cats.length ? cats : ['other'] };
     if (ui.dialog.siteId) S.updateSite(ui.dialog.siteId, data);
     else S.addSite(data);
   }
@@ -1190,10 +1302,12 @@ const actions = {
         const on = group === 'region' ? s.regions.includes(c.dataset.v) : c.dataset.v === v;
         c.setAttribute(c.getAttribute('role') === 'radio' ? 'aria-checked' : 'aria-pressed', String(on));
       });
-      $('#results').innerHTML = searchResults();
+      refreshResults();
+      scheduleTranslation(0);
       return;
     }
     render();
+    if (group === 'cat') scheduleTranslation(0);
   },
   track() {
     const name = searchItemName();
@@ -1211,7 +1325,7 @@ const actions = {
       cond: site.kind === 'used' || site.kind === 'sold' ? 'used' : 'new',
       currency: site.cur || REGION_CURRENCY[site.region],
     };
-    const { url, missing } = buildUrl(site.url, searchParams());
+    const { url, missing } = buildUrl(site.url, paramsFor(site));
     if (!missing.length) preset.url = url;
     openQuote({ preset, itemName: searchItemName() });
   },
@@ -1230,6 +1344,19 @@ const actions = {
     window.open(el.dataset.href, '_blank', 'noopener');
   },
   scan() { openScanner(); },
+  'tr-edit'(el) {
+    const lang = el.dataset.lang;
+    const text = trSource();
+    const now = termFor(lang);
+    const v = prompt(t('tr.editPrompt', { lang: LANG_LABEL[lang] }), now);
+    if (v === null) return;
+    const edits = state.search.trEdits?.text === text ? state.search.trEdits : { text, map: {} };
+    if (v.trim() && v.trim() !== now) edits.map[lang] = v.trim();
+    else if (!v.trim()) delete edits.map[lang];
+    state.search.trEdits = edits;
+    S.save();
+    refreshResults();
+  },
   'focus-search'() {
     const el = $$('.search-form [data-bind]').find((x) => !x.value && !x.disabled && x.type !== 'checkbox') || $('.search-form [data-bind]');
     if (!el) return;
@@ -1437,6 +1564,7 @@ document.addEventListener('change', async (e) => {
   if (el.dataset.set) {
     const key = el.dataset.set;
     if (key === 'sync.auto') { state.sync.auto = el.checked; S.save(); return; }
+    if (key === 'autoTranslate') { S.setSetting('autoTranslate', el.checked); refreshResults(); scheduleTranslation(0); return; }
     S.setSetting(key, key === 'staleDays' ? Math.max(1, Math.round(num(el.value, 7))) : el.value);
     render();
     return;
@@ -1521,7 +1649,8 @@ document.addEventListener('input', (e) => {
     }
     if (key === 'oneway') { const r = $('[data-bind=ret]'); if (r) r.disabled = s.oneway; }
     S.save();
-    $('#results').innerHTML = searchResults();
+    refreshResults();
+    if (key === 'q' || key === 'city') scheduleTranslation();
     return;
   }
   if (el.dataset.conv) {
@@ -1550,7 +1679,7 @@ document.addEventListener('submit', (e) => {
 
 $('#lang-toggle').addEventListener('click', () => actions['lang-toggle']());
 
-window.addEventListener('hashchange', () => { render(); window.scrollTo(0, 0); });
+window.addEventListener('hashchange', () => { render(); window.scrollTo(0, 0); if (route().name === 'search') scheduleTranslation(0); });
 window.addEventListener('online', () => { if (state.sync.dirty) doSync({ quiet: true }); });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && Date.now() - lastAutoSync > 60_000) {
@@ -1574,6 +1703,7 @@ window.addEventListener('beforeinstallprompt', (e) => {
 // ---------- boot ----------
 setLang(state.settings.lang);
 render();
+if (route().name === 'search') scheduleTranslation(0);
 
 // Android "Share to PriceBook" (Web Share Target) arrives as ?url=&text=&title=
 (() => {

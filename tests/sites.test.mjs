@@ -79,3 +79,15 @@ test('every site has a home page to fall back on', () => {
   assert.equal(siteHome(DEFAULT_SITES.find((s) => s.id === 'amazon-uk')), 'https://www.amazon.co.uk/');
   assert.equal(siteHome(DEFAULT_SITES.find((s) => s.id === 'sky-hk')), 'https://www.skyscanner.com.hk/');
 });
+
+import { siteLang } from '../js/sites.js';
+import { LANGS } from '../js/translate.js';
+
+test('every site has a supported search language', () => {
+  for (const s of DEFAULT_SITES) assert.ok(LANGS.includes(siteLang(s)), s.id);
+  assert.equal(siteLang(DEFAULT_SITES.find((s) => s.id === 'hktvmall')), 'zh');
+  assert.equal(siteLang(DEFAULT_SITES.find((s) => s.id === 'amazon-uk')), 'en');
+  assert.equal(siteLang(DEFAULT_SITES.find((s) => s.id === 'idealo-de')), 'de');
+  assert.equal(siteLang(DEFAULT_SITES.find((s) => s.id === 'leboncoin')), 'fr');
+  assert.equal(siteLang(DEFAULT_SITES.find((s) => s.id === 'ah')), 'nl');
+});
