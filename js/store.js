@@ -17,6 +17,7 @@ function defaults() {
       cardCurrency: 'HKD',
       cards: [{ ...DEFAULT_CARD }],
       staleDays: 7,
+      autoTranslate: true,
       // Forwarder price per kg in HKD, by warehouse region (Buy&Ship UK ≈ HK$25/lb in 2026).
       fwdRates: { UK: 55, EU: '', GLOBAL: '' },
       manualRates: {},
@@ -95,7 +96,7 @@ export function setSetting(key, value) {
 export function getSites({ includeDisabled = false } = {}) {
   const out = DEFAULT_SITES.map((s) => {
     const o = state.siteState[s.id] || {};
-    return { ...s, ...(o.name ? { name: o.name } : {}), ...(o.url ? { url: o.url, via: '' } : {}), enabled: o.enabled !== false, check: o.check || '', builtin: true };
+    return { ...s, ...(o.name ? { name: o.name } : {}), ...(o.url ? { url: o.url, via: '' } : {}), ...(o.lang ? { lang: o.lang } : {}), enabled: o.enabled !== false, check: o.check || '', builtin: true };
   });
   for (const c of state.customSites) if (!c.deleted) out.push({ ...c, enabled: c.enabled !== false, builtin: false });
   return includeDisabled ? out : out.filter((s) => s.enabled);

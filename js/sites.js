@@ -13,6 +13,10 @@ export const PRODUCT_CATS = ['coffee', 'home', 'grocery', 'electronics', 'other'
 export const REGIONS = ['HK', 'UK', 'EU', 'GLOBAL'];
 export const KINDS = ['compare', 'shop', 'used', 'sold'];
 export const REGION_CURRENCY = { HK: 'HKD', UK: 'GBP', EU: 'EUR', GLOBAL: 'USD' };
+const REGION_LANG = { HK: 'zh', UK: 'en', EU: 'en', GLOBAL: 'en' };
+
+/** Language a site searches best in (sites can set `lang`; otherwise by region). */
+export const siteLang = (site) => site.lang || REGION_LANG[site.region] || 'en';
 
 const P = ['coffee', 'home', 'electronics', 'other'];
 // Google search limited to one store. Used where a store's own search link
@@ -31,8 +35,8 @@ export const DEFAULT_SITES = [
   { id: 'kayak-hk-f', name: 'KAYAK 香港', region: 'HK', kind: 'compare', cats: ['flight'], url: 'https://www.kayak.com.hk/flights/{from}-{to}/{depart}[/{return}]/{adults}adults?sort=price_a' },
   { id: 'sky-uk', name: 'Skyscanner UK', region: 'UK', kind: 'compare', cats: ['flight'], url: 'https://www.skyscanner.net/transport/flights/{from_l}/{to_l}/{depart_yymmdd}/[{return_yymmdd}/]?adultsv2={adults}' },
   { id: 'kayak-uk-f', name: 'KAYAK UK', region: 'UK', kind: 'compare', cats: ['flight'], url: 'https://www.kayak.co.uk/flights/{from}-{to}/{depart}[/{return}]/{adults}adults?sort=price_a' },
-  { id: 'sky-de', name: 'Skyscanner DE', region: 'EU', kind: 'compare', cats: ['flight'], url: 'https://www.skyscanner.de/transport/flights/{from_l}/{to_l}/{depart_yymmdd}/[{return_yymmdd}/]?adultsv2={adults}' },
-  { id: 'momondo', name: 'momondo', region: 'EU', kind: 'compare', cats: ['flight'], url: 'https://www.momondo.com/flight-search/{from}-{to}/{depart}[/{return}]/{adults}adults?sort=price_a' },
+  { id: 'sky-de', lang: 'de', name: 'Skyscanner DE', region: 'EU', kind: 'compare', cats: ['flight'], url: 'https://www.skyscanner.de/transport/flights/{from_l}/{to_l}/{depart_yymmdd}/[{return_yymmdd}/]?adultsv2={adults}' },
+  { id: 'momondo', lang: 'en', name: 'momondo', region: 'EU', kind: 'compare', cats: ['flight'], url: 'https://www.momondo.com/flight-search/{from}-{to}/{depart}[/{return}]/{adults}adults?sort=price_a' },
   { id: 'gflights', name: 'Google Flights', region: 'GLOBAL', kind: 'compare', cats: ['flight'], url: 'https://www.google.com/travel/flights?q=Flights%20from%20{from}%20to%20{to}%20on%20{depart}[%20through%20{return}]' },
 
   // Hotels
@@ -95,40 +99,40 @@ export const DEFAULT_SITES = [
   { id: 'cex-uk', name: 'CeX UK', region: 'UK', kind: 'used', cats: ['electronics'], url: 'https://uk.webuy.com/search?stext={q}' },
 
   // Europe — products
-  { id: 'idealo-de', name: 'idealo.de', region: 'EU', kind: 'compare', cats: P, url: 'https://www.idealo.de/preisvergleich/MainSearchProductCategory.html?q={q}' },
-  { id: 'geizhals', name: 'Geizhals', region: 'EU', kind: 'compare', cats: ['electronics', 'coffee', 'home'], url: 'https://geizhals.de/?fs={q}' },
-  { id: 'idealo-fr', name: 'idealo.fr', region: 'EU', kind: 'compare', cats: P, url: 'https://www.idealo.fr/prechcat.html?q={q}' },
-  { id: 'gshop-de', name: 'Google Shopping DE', region: 'EU', kind: 'compare', cats: [...P, 'grocery'], url: 'https://www.google.com/search?tbm=shop&gl=de&hl=de&q={q}' },
-  { id: 'amazon-de', name: 'Amazon.de', region: 'EU', kind: 'shop', cats: P, url: 'https://www.amazon.de/s?k={q}' },
-  { id: 'amazon-fr', name: 'Amazon.fr', region: 'EU', kind: 'shop', cats: P, url: 'https://www.amazon.fr/s?k={q}' },
-  { id: 'amazon-it', name: 'Amazon.it', region: 'EU', kind: 'shop', cats: P, url: 'https://www.amazon.it/s?k={q}' },
-  { id: 'mediamarkt', name: 'MediaMarkt DE', region: 'EU', kind: 'shop', cats: ['electronics', 'coffee', 'home'], url: 'https://www.mediamarkt.de/de/search.html?query={q}' },
-  { id: 'coolblue', name: 'Coolblue NL', region: 'EU', kind: 'shop', cats: ['electronics', 'coffee', 'home'], url: 'https://www.coolblue.nl/zoeken?query={q}' },
-  { id: 'fnac', name: 'Fnac FR', region: 'EU', kind: 'shop', cats: ['electronics', 'coffee', 'other'], url: 'https://www.fnac.com/SearchResult/ResultList.aspx?Search={q}' },
-  { id: 'kaufland', name: 'Kaufland DE', region: 'EU', kind: 'shop', cats: P, url: 'https://www.kaufland.de/s/?search_value={q}' },
-  { id: 'otto', name: 'OTTO DE', region: 'EU', kind: 'shop', cats: P, ...gsite('otto.de') },
-  { id: 'bol', name: 'bol.com NL', region: 'EU', kind: 'shop', cats: P, ...gsite('bol.com') },
-  { id: 'ikea-de', name: 'IKEA DE', region: 'EU', kind: 'shop', cats: ['home'], url: 'https://www.ikea.com/de/de/search/?q={q}' },
-  { id: 'roastmarket', name: 'roastmarket', region: 'EU', kind: 'shop', cats: ['coffee'], ...gsite('roastmarket.de') },
-  { id: 'dm', name: 'dm', region: 'EU', kind: 'shop', cats: ['home', 'grocery'], url: 'https://www.dm.de/search?query={q}' },
-  { id: 'rossmann', name: 'Rossmann', region: 'EU', kind: 'shop', cats: ['home', 'grocery'], url: 'https://www.rossmann.de/de/search/?text={q}' },
-  { id: 'rewe', name: 'REWE', region: 'EU', kind: 'shop', cats: ['grocery'], url: 'https://www.rewe.de/suche/?search={q}' },
-  { id: 'lidl-de', name: 'Lidl DE', region: 'EU', kind: 'shop', cats: ['grocery', 'home'], ...gsite('lidl.de') },
-  { id: 'carrefour-fr', name: 'Carrefour FR', region: 'EU', kind: 'shop', cats: ['grocery'], url: 'https://www.carrefour.fr/s?q={q}' },
-  { id: 'ah', name: 'Albert Heijn', region: 'EU', kind: 'shop', cats: ['grocery'], url: 'https://www.ah.nl/zoeken?query={q}' },
-  { id: 'jumbo', name: 'Jumbo NL', region: 'EU', kind: 'shop', cats: ['grocery'], url: 'https://www.jumbo.com/zoeken?searchTerms={q}' },
-  { id: 'ebay-de-used', name: 'eBay.de 二手', region: 'EU', kind: 'used', cats: P, url: 'https://www.ebay.de/sch/i.html?_nkw={q}&LH_ItemCondition=3000' },
-  { id: 'ebay-de-sold', name: 'eBay.de 已售出', region: 'EU', kind: 'sold', cats: P, url: 'https://www.ebay.de/sch/i.html?_nkw={q}&LH_Sold=1&LH_Complete=1' },
-  { id: 'kleinanzeigen', name: 'Kleinanzeigen', region: 'EU', kind: 'used', cats: P, url: 'https://www.kleinanzeigen.de/s-{q_dash}/k0' },
-  { id: 'vinted-de', name: 'Vinted DE', region: 'EU', kind: 'used', cats: ['home', 'other'], url: 'https://www.vinted.de/catalog?search_text={q}' },
-  { id: 'leboncoin', name: 'leboncoin', region: 'EU', kind: 'used', cats: P, url: 'https://www.leboncoin.fr/recherche?text={q}' },
-  { id: 'marktplaats', name: 'Marktplaats', region: 'EU', kind: 'used', cats: P, url: 'https://www.marktplaats.nl/q/{q_dash}/' },
+  { id: 'idealo-de', lang: 'de', name: 'idealo.de', region: 'EU', kind: 'compare', cats: P, url: 'https://www.idealo.de/preisvergleich/MainSearchProductCategory.html?q={q}' },
+  { id: 'geizhals', lang: 'de', name: 'Geizhals', region: 'EU', kind: 'compare', cats: ['electronics', 'coffee', 'home'], url: 'https://geizhals.de/?fs={q}' },
+  { id: 'idealo-fr', lang: 'fr', name: 'idealo.fr', region: 'EU', kind: 'compare', cats: P, url: 'https://www.idealo.fr/prechcat.html?q={q}' },
+  { id: 'gshop-de', lang: 'de', name: 'Google Shopping DE', region: 'EU', kind: 'compare', cats: [...P, 'grocery'], url: 'https://www.google.com/search?tbm=shop&gl=de&hl=de&q={q}' },
+  { id: 'amazon-de', lang: 'de', name: 'Amazon.de', region: 'EU', kind: 'shop', cats: P, url: 'https://www.amazon.de/s?k={q}' },
+  { id: 'amazon-fr', lang: 'fr', name: 'Amazon.fr', region: 'EU', kind: 'shop', cats: P, url: 'https://www.amazon.fr/s?k={q}' },
+  { id: 'amazon-it', lang: 'it', name: 'Amazon.it', region: 'EU', kind: 'shop', cats: P, url: 'https://www.amazon.it/s?k={q}' },
+  { id: 'mediamarkt', lang: 'de', name: 'MediaMarkt DE', region: 'EU', kind: 'shop', cats: ['electronics', 'coffee', 'home'], url: 'https://www.mediamarkt.de/de/search.html?query={q}' },
+  { id: 'coolblue', lang: 'nl', name: 'Coolblue NL', region: 'EU', kind: 'shop', cats: ['electronics', 'coffee', 'home'], url: 'https://www.coolblue.nl/zoeken?query={q}' },
+  { id: 'fnac', lang: 'fr', name: 'Fnac FR', region: 'EU', kind: 'shop', cats: ['electronics', 'coffee', 'other'], url: 'https://www.fnac.com/SearchResult/ResultList.aspx?Search={q}' },
+  { id: 'kaufland', lang: 'de', name: 'Kaufland DE', region: 'EU', kind: 'shop', cats: P, url: 'https://www.kaufland.de/s/?search_value={q}' },
+  { id: 'otto', lang: 'de', name: 'OTTO DE', region: 'EU', kind: 'shop', cats: P, ...gsite('otto.de') },
+  { id: 'bol', lang: 'nl', name: 'bol.com NL', region: 'EU', kind: 'shop', cats: P, ...gsite('bol.com') },
+  { id: 'ikea-de', lang: 'de', name: 'IKEA DE', region: 'EU', kind: 'shop', cats: ['home'], url: 'https://www.ikea.com/de/de/search/?q={q}' },
+  { id: 'roastmarket', lang: 'de', name: 'roastmarket', region: 'EU', kind: 'shop', cats: ['coffee'], ...gsite('roastmarket.de') },
+  { id: 'dm', lang: 'de', name: 'dm', region: 'EU', kind: 'shop', cats: ['home', 'grocery'], url: 'https://www.dm.de/search?query={q}' },
+  { id: 'rossmann', lang: 'de', name: 'Rossmann', region: 'EU', kind: 'shop', cats: ['home', 'grocery'], url: 'https://www.rossmann.de/de/search/?text={q}' },
+  { id: 'rewe', lang: 'de', name: 'REWE', region: 'EU', kind: 'shop', cats: ['grocery'], url: 'https://www.rewe.de/suche/?search={q}' },
+  { id: 'lidl-de', lang: 'de', name: 'Lidl DE', region: 'EU', kind: 'shop', cats: ['grocery', 'home'], ...gsite('lidl.de') },
+  { id: 'carrefour-fr', lang: 'fr', name: 'Carrefour FR', region: 'EU', kind: 'shop', cats: ['grocery'], url: 'https://www.carrefour.fr/s?q={q}' },
+  { id: 'ah', lang: 'nl', name: 'Albert Heijn', region: 'EU', kind: 'shop', cats: ['grocery'], url: 'https://www.ah.nl/zoeken?query={q}' },
+  { id: 'jumbo', lang: 'nl', name: 'Jumbo NL', region: 'EU', kind: 'shop', cats: ['grocery'], url: 'https://www.jumbo.com/zoeken?searchTerms={q}' },
+  { id: 'ebay-de-used', lang: 'de', name: 'eBay.de 二手', region: 'EU', kind: 'used', cats: P, url: 'https://www.ebay.de/sch/i.html?_nkw={q}&LH_ItemCondition=3000' },
+  { id: 'ebay-de-sold', lang: 'de', name: 'eBay.de 已售出', region: 'EU', kind: 'sold', cats: P, url: 'https://www.ebay.de/sch/i.html?_nkw={q}&LH_Sold=1&LH_Complete=1' },
+  { id: 'kleinanzeigen', lang: 'de', name: 'Kleinanzeigen', region: 'EU', kind: 'used', cats: P, url: 'https://www.kleinanzeigen.de/s-{q_dash}/k0' },
+  { id: 'vinted-de', lang: 'de', name: 'Vinted DE', region: 'EU', kind: 'used', cats: ['home', 'other'], url: 'https://www.vinted.de/catalog?search_text={q}' },
+  { id: 'leboncoin', lang: 'fr', name: 'leboncoin', region: 'EU', kind: 'used', cats: P, url: 'https://www.leboncoin.fr/recherche?text={q}' },
+  { id: 'marktplaats', lang: 'nl', name: 'Marktplaats', region: 'EU', kind: 'used', cats: P, url: 'https://www.marktplaats.nl/q/{q_dash}/' },
 
   // Global
   { id: 'amazon-us', name: 'Amazon.com', region: 'GLOBAL', kind: 'shop', cats: P, url: 'https://www.amazon.com/s?k={q}' },
   { id: 'aliexpress', name: 'AliExpress', region: 'GLOBAL', kind: 'shop', cats: P, url: 'https://www.aliexpress.com/w/wholesale-{q_dash}.html' },
-  { id: 'taobao', name: '淘寶 Taobao', region: 'GLOBAL', kind: 'shop', cats: [...P, 'grocery'], cur: 'CNY', url: 'https://s.taobao.com/search?q={q}' },
-  { id: 'iherb', name: 'iHerb', region: 'GLOBAL', kind: 'shop', cats: ['grocery', 'home'], cur: 'HKD', url: 'https://hk.iherb.com/search?kw={q}' },
+  { id: 'taobao', lang: 'zh', name: '淘寶 Taobao', region: 'GLOBAL', kind: 'shop', cats: [...P, 'grocery'], cur: 'CNY', url: 'https://s.taobao.com/search?q={q}' },
+  { id: 'iherb', lang: 'en', name: 'iHerb', region: 'GLOBAL', kind: 'shop', cats: ['grocery', 'home'], cur: 'HKD', url: 'https://hk.iherb.com/search?kw={q}' },
 ];
 
 const yymmdd = (d) => (d ? d.slice(2).replace(/-/g, '') : '');

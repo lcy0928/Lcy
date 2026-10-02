@@ -7,6 +7,7 @@ A personal price-comparison web app (PWA) for shopping across Hong Kong, the UK 
 ## 功能
 
 - **一鍵多站搜尋**：機票、酒店、咖啡器材、生活用品、超市、電子產品，覆蓋 93 個香港、英國、歐洲網站，可以篩選地區同新舊。
+- **自動翻譯關鍵字**：中文或者英文都得，每個網站會用佢嘅語言搜尋（香港網站用中文、英國用英文、德法荷意網站用當地語言）。常用購物詞用內置詞庫，其他中文詞用免費嘅 MyMemory 翻譯；品牌同型號唔會翻譯，翻譯結果可以自己改。
 - **消委會超市價**：每日自動下載消委會「網上價格一覽通」開放數據，搜超市貨品即刻見到各超市價錢同優惠；加入心水之後每日自動更新價錢。
 - **到手價計算**：
   - VAT：海外網購寄香港可以扣除 VAT；寄去集運倉就照收 VAT，集運費按重量計。
@@ -48,6 +49,7 @@ npm test    # 單元測試（Node 22+）
 | `js/landed.js` | 到手價計算：VAT、退稅門檻、信用卡、集運、單位價 |
 | `js/opw.js`, `scripts/opw-build.mjs` | 消委會開放數據（每日由 GitHub Actions 下載） |
 | `js/detect.js` | 由連結認出網站 |
+| `js/translate.js` | 關鍵字翻譯（內置詞庫 + MyMemory） |
 | `js/alerts.js` | 降價通知捷徑 |
 | `js/scan.js`, `js/ocr.js` | 掃 barcode、讀價錢牌 |
 | `js/currency.js` | 匯率同貨幣格式 |
