@@ -3,7 +3,7 @@ import * as S from './store.js';
 import { state } from './store.js';
 import { CATS, PRODUCT_CATS, REGIONS, KINDS, REGION_CURRENCY, buildUrl } from './sites.js';
 import { CURRENCIES, convert, effectiveRates, fetchRates, fmt, fmtParts } from './currency.js';
-import { landed, latestPerSite, rankQuotes, COUNTRIES, REGION_COUNTRY, MODES } from './landed.js';
+import { landed, latestPerSite, rankQuotes, COUNTRIES, REGION_COUNTRY, MODES, DEFAULT_CARD, isOverseas } from './landed.js';
 import { syncGist, mergeData } from './sync.js';
 import { buildChart, bindChart } from './chart.js';
 import { esc, num, uid, localDate, addDays, safeUrl } from './util.js';
@@ -21,10 +21,11 @@ let installPrompt = null;
 const ctx = () => ({
   base: state.settings.base,
   cardCurrency: state.settings.cardCurrency,
-  cardFeePct: state.settings.cardFeePct,
+  cards: state.settings.cards,
   rates: effectiveRates(state.rates, state.settings.manualRates),
 });
 const money = (v, cur = state.settings.base) => fmt(v, cur, getLang());
+const cardName = (c) => c?.name || t('card.default');
 const locale = () => (getLang() === 'zh' ? 'zh-HK' : 'en-GB');
 
 function fmtDate(iso) {
@@ -285,7 +286,7 @@ function priceTag(best, item, c, second) {
 }
 
 function breakdown(r, withTotal = true) {
-  return `<table class="breakdown">${r.lines.map((l) => `<tr><th>${t('line.' + l.k, { pct: l.pct })}</th><td>${esc(fmt(l.v, l.cur, getLang()))}</td></tr>`).join('')}
+  return `<table class="breakdown">${r.lines.map((l) => `<tr><th>${esc(t('line.' + l.k, { pct: l.pct, card: l.card || t('card.default') }))}</th><td>${esc(fmt(l.v, l.cur, getLang()))}</td></tr>`).join('')}
     ${withTotal ? `<tr class="total"><th>${t('line.total')}</th><td>${esc(money(r.total))}</td></tr>` : ''}</table>`;
 }
 
@@ -374,10 +375,11 @@ function convOut() {
   const amt = num(ui.conv.amt, NaN);
   const from = ui.conv.cur;
   const targets = [...new Set([c.base, 'HKD', 'GBP', 'EUR', 'USD'])].filter((x) => x !== from);
-  const fee = from !== c.cardCurrency ? num(c.cardFeePct) : 0;
-  const withFee = fee && Number.isFinite(amt) ? convert(amt * (1 + fee / 100), from, c.cardCurrency, c.rates) : NaN;
+  const paid = Number.isFinite(amt) && from !== c.cardCurrency
+    ? landed({ price: amt, currency: from, region: 'GLOBAL', mode: 'local' }, { ...c, base: c.cardCurrency })
+    : null;
   return `<ul class="conv-list">${targets.map((x) => `<li><span class="conv-cur">${x}</span><span class="conv-val">${esc(fmt(convert(amt, from, x, c.rates), x, getLang()))}</span></li>`).join('')}</ul>
-    ${Number.isFinite(withFee) ? `<p class="muted">${t('calc.withFee', { pct: fee })}: <b>${esc(fmt(withFee, c.cardCurrency, getLang()))}</b></p>` : ''}`;
+    ${paid ? `<p class="muted">${esc(t('calc.withFee', { card: cardName(paid.card) }))}: <b>${esc(fmt(paid.total, c.cardCurrency, getLang()))}</b></p>` : ''}`;
 }
 
 function viewCalc() {
@@ -417,6 +419,23 @@ function rateRows() {
     <td>${sig(live[c])} HKD</td>
     <td><input type="number" step="any" inputmode="decimal" data-rate="${c}" value="${manual[c] ? esc(manual[c]) : ''}" placeholder="${esc(sig(live[c]))}" aria-label="${c} ${esc(t('set.ratesCustom'))}"></td>
   </tr>`).join('');
+}
+
+function cardRows() {
+  const cards = state.settings.cards;
+  const numIn = (c, k) => `<input type="number" step="0.01" min="0" inputmode="decimal" data-card="${esc(c.id)}" data-k="${k}" value="${esc(c[k] ?? 0)}">`;
+  return cards.map((c) => `<fieldset class="card-set">
+    <div class="card-set-head">
+      <input data-card="${esc(c.id)}" data-k="name" value="${esc(c.name)}" placeholder="${esc(t('card.default'))}" aria-label="${esc(t('card.name'))}">
+      ${cards.length > 1 ? `<button type="button" class="btn small quiet danger" data-act="card-delete" data-card="${esc(c.id)}">${t('delete')}</button>` : ''}
+    </div>
+    <div class="grid-4">
+      ${field(t('card.fcc'), numIn(c, 'fcc'))}
+      ${field(t('card.cbf'), numIn(c, 'cbf'))}
+      ${field(t('card.cashback'), numIn(c, 'cashback'))}
+      ${field(t('card.markup'), numIn(c, 'markup'))}
+    </div>
+  </fieldset>`).join('');
 }
 
 function siteRows() {
@@ -462,10 +481,16 @@ function viewSettings() {
       ${field(t('set.lang'), `<select data-set="lang">${opt('zh', '中文（香港）', st.lang === 'zh')}${opt('en', 'English', st.lang === 'en')}</select>`)}
       ${field(t('set.base'), `<select data-set="base">${curOptions(st.base)}</select>`)}
       ${field(t('set.cardCur'), `<select data-set="cardCurrency">${curOptions(st.cardCurrency)}</select>`)}
-      ${field(t('set.cardFee'), `<input type="number" step="0.01" min="0" inputmode="decimal" data-set="cardFeePct" value="${esc(st.cardFeePct)}">`)}
     </div>
-    <p class="muted small">${t('set.cardFeeHint')}</p>
     ${installPrompt ? `<button type="button" class="btn" data-act="install">${t('set.install')}</button>` : ''}
+  </section>
+  <section class="card">
+    <div class="section-bar">
+      <h2 class="section-h">${t('card.section')}</h2>
+      <button type="button" class="btn small" data-act="card-add">+ ${t('card.add')}</button>
+    </div>
+    <p class="muted small">${t('card.hint')}</p>
+    ${cardRows()}
   </section>
   <section class="card">
     <div class="section-bar">
@@ -536,7 +561,7 @@ function defaultQuote(preset = {}) {
     site: '', region, cond: 'new', price: '', currency: REGION_CURRENCY[region], mode, country,
     removeVat: mode === 'online' && (region === 'UK' || region === 'EU'),
     vatRate: cp.vat, refundPct: cp.refund, shipping: '', fees: '', fwd: '', fwdCur: state.settings.cardCurrency,
-    dutyPct: '', cardFeePct: '', url: '', date: localDate(), note: '',
+    dutyPct: '', cardId: '', url: '', date: localDate(), note: '',
     ...preset,
   };
 }
@@ -576,15 +601,16 @@ function quoteFormHtml(q, { needName, itemName, editing, refresh }) {
         ${field(t('quote.shipping'), numIn('shipping', q.shipping, 'min="0"'))}
         ${field(t('quote.fees'), numIn('fees', q.fees, `min="0" placeholder="${esc(t('quote.feesHint'))}"`))}
       </div>
-      <details class="more"${editing && (q.fwd || q.dutyPct || q.cardFeePct !== '' || q.note) ? ' open' : ''}>
+      <details class="more"${editing && (q.fwd || q.dutyPct || q.cardId || q.note) ? ' open' : ''}>
         <summary>${t('quote.more')}</summary>
         <div class="grid-2">
           ${field(t('quote.fwd'), numIn('fwd', q.fwd, 'min="0"'))}
           ${field(t('quote.currency'), `<select name="fwdCur">${curOptions(q.fwdCur || state.settings.cardCurrency)}</select>`)}
           <div class="only-online">${field(`${t('quote.duty')} <span class="muted">· ${t('quote.dutyHint')}</span>`, numIn('dutyPct', q.dutyPct, 'min="0" placeholder="0"'))}</div>
-          ${field(t('quote.cardFee'), numIn('cardFeePct', q.cardFeePct, `min="0" placeholder="${esc(t('quote.cardFeeAuto', { pct: state.settings.cardFeePct }))}"`))}
+          ${field(t('quote.card'), `<select name="cardId">${opt('', t('card.auto'), !q.cardId)}${state.settings.cards.map((c) => opt(c.id, cardName(c), c.id === q.cardId)).join('')}</select>`)}
           ${field(t('quote.date'), `<input type="date" name="date" value="${esc(q.date)}">`)}
         </div>
+        <label class="check"><input type="checkbox" name="overseas"${isOverseas(q) ? ' checked' : ''}> ${t('quote.overseas')}</label>
         ${field(t('quote.note'), `<input name="note" value="${esc(q.note)}" autocomplete="off">`)}
       </details>
       <div class="preview" id="q-preview"></div>
@@ -615,7 +641,9 @@ function readQuoteForm(form) {
     fwd: numOrBlank('fwd'),
     fwdCur: f.fwdCur.value,
     dutyPct: numOrBlank('dutyPct'),
-    cardFeePct: numOrBlank('cardFeePct'),
+    cardId: f.cardId.value,
+    overseas: f.overseas.checked,
+    cardFeePct: '',
     url: f.url.value.trim(),
     date: f.date.value || localDate(),
     note: f.note.value.trim(),
@@ -655,6 +683,7 @@ function applyDetection(form, det, force = false) {
     f.currency.value = det.currency;
     f.cond.value = det.cond;
     f.country.value = REGION_COUNTRY[det.region];
+    f.overseas.checked = det.region !== 'HK';
     f.country.dispatchEvent(new Event('change', { bubbles: true }));
   }
   if (f.itemName && !f.itemName.value.trim()) f.itemName.value = nameFromUrl(det.url);
@@ -955,6 +984,14 @@ const actions = {
   'dlg-close'() { closeDialog(); },
   'lang-toggle'() { S.setSetting('lang', getLang() === 'zh' ? 'en' : 'zh'); render(); },
   'rates-refresh'() { refreshRates(); },
+  'card-add'() {
+    S.setSetting('cards', [...state.settings.cards, { ...DEFAULT_CARD, id: uid(), name: '' }]);
+    render();
+  },
+  'card-delete'(el) {
+    S.setSetting('cards', state.settings.cards.filter((c) => c.id !== el.dataset.card));
+    render();
+  },
   'site-toggle'(el) { S.updateSite(el.dataset.site, { enabled: el.checked }); $('#results') && ($('#results').innerHTML = searchResults()); },
   'site-edit'(el) { openSiteDialog(S.getSites({ includeDisabled: true }).find((s) => s.id === el.dataset.site)); },
   'site-add'() { openSiteDialog(null); },
@@ -1030,9 +1067,14 @@ document.addEventListener('change', async (e) => {
   if (el.dataset.set) {
     const key = el.dataset.set;
     if (key === 'sync.auto') { state.sync.auto = el.checked; S.save(); return; }
-    const v = key === 'cardFeePct' ? num(el.value) : el.value;
-    S.setSetting(key, v);
+    S.setSetting(key, el.value);
     render();
+    return;
+  }
+  if (el.dataset.card && el.dataset.k) {
+    const k = el.dataset.k;
+    const cards = state.settings.cards.map((c) => (c.id === el.dataset.card ? { ...c, [k]: k === 'name' ? el.value.trim() : num(el.value) } : c));
+    S.setSetting('cards', cards);
     return;
   }
   if (el.dataset.rate) {
@@ -1065,6 +1107,7 @@ document.addEventListener('change', async (e) => {
         form.elements.country.dispatchEvent(new Event('change', { bubbles: true }));
       }
     }
+    if (el.name === 'region') form.elements.overseas.checked = el.value !== 'HK';
     if (el.name === 'url') {
       const url = extractUrl(el.value);
       if (url) applyDetection(form, detectFromUrl(url, S.getSites({ includeDisabled: true })));

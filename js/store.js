@@ -1,6 +1,7 @@
 // App state, persisted to localStorage. The GitHub token is stored on its own
 // key and never included in exports or the synced payload.
 import { DEFAULT_SITES } from './sites.js';
+import { DEFAULT_CARD } from './landed.js';
 import { localDate, uid } from './util.js';
 
 const KEY = 'pricebook:v1';
@@ -14,7 +15,7 @@ function defaults() {
       lang: zh ? 'zh' : 'en',
       base: 'HKD',
       cardCurrency: 'HKD',
-      cardFeePct: 1.95,
+      cards: [{ ...DEFAULT_CARD }],
       manualRates: {},
       updatedAt: 0,
     },
@@ -41,6 +42,11 @@ function load() {
     const raw = localStorage.getItem(KEY);
     if (!raw) return d;
     const s = JSON.parse(raw);
+    // v1 kept a single FX fee; turn it into the default card.
+    if (s.settings && !Array.isArray(s.settings.cards)) {
+      s.settings.cards = [{ ...DEFAULT_CARD, fcc: s.settings.cardFeePct ?? DEFAULT_CARD.fcc }];
+      delete s.settings.cardFeePct;
+    }
     return {
       ...d,
       ...s,

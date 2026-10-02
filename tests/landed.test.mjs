@@ -69,3 +69,37 @@ test('rankQuotes sorts by landed total', () => {
   ];
   assert.deepEqual(rankQuotes(qs, ctx).map((x) => x.q.id), ['hk', 'eu', 'uk']);
 });
+
+const cards = [
+  { id: 'default', name: 'Normal', fcc: 1.95, cbf: 1, cashback: 0, markup: 0 },
+  { id: 'nofee', name: 'No-fee', fcc: 0, cbf: 0, cashback: 0.4, markup: 0 },
+  { id: 'cash', name: 'Cashback', fcc: 1.95, cbf: 1, cashback: 4, markup: 0 },
+];
+const cctx = { base: 'HKD', cardCurrency: 'HKD', cards, rates };
+
+test('overseas merchant charging HKD attracts the cross-border fee', () => {
+  const q = { price: 1000, currency: 'HKD', region: 'GLOBAL', mode: 'local', cardId: 'default' };
+  close(landed(q, cctx).total, 1010);
+  close(landed({ ...q, region: 'HK' }, cctx).total, 1000);
+  close(landed({ ...q, overseas: false }, cctx).total, 1000);
+});
+
+test('auto card choice picks the cheapest card after fees and cashback', () => {
+  const foreign = landed({ price: 100, currency: 'GBP', region: 'UK', mode: 'local' }, cctx);
+  // Cashback: +1.95% -4% = -2.05% beats no-fee -0.4%
+  assert.equal(foreign.card.id, 'cash');
+  close(foreign.total, 100 * (1 + 0.0195 - 0.04) * 10);
+  assert.ok(foreign.lines.some((l) => l.k === 'cashback'));
+});
+
+test('a chosen card is respected even when not the cheapest', () => {
+  const r = landed({ price: 100, currency: 'GBP', region: 'UK', mode: 'local', cardId: 'nofee' }, cctx);
+  assert.equal(r.card.id, 'nofee');
+  close(r.total, 100 * (1 - 0.004) * 10);
+});
+
+test('card FX markup adds to the foreign fee', () => {
+  const r = landed({ price: 100, currency: 'EUR', region: 'EU', mode: 'local', cardId: 'm' },
+    { ...cctx, cards: [{ id: 'm', name: 'M', fcc: 1, cbf: 1, cashback: 0, markup: 0.5 }] });
+  close(r.total, 100 * 1.015 * 8.5);
+});

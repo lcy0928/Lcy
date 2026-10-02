@@ -202,6 +202,12 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--accent);
 
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .grid-3 { display: grid; grid-template-columns: 1fr 1fr 84px; gap: 12px; margin-top: 12px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.grid-4 .field-label { font-size: 12px; }
+.card-set { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 0 0 10px; display: flex; flex-direction: column; gap: 10px; }
+.card-set-head { display: flex; gap: 8px; align-items: center; }
+.card-set-head input { flex: 1; font-weight: 600; }
+@media (max-width: 520px) { .grid-4 { grid-template-columns: 1fr 1fr; } }
 .grid-price { display: grid; grid-template-columns: 1fr 100px 96px; gap: 12px; }
 .grid-2 > .check { align-self: end; }
 

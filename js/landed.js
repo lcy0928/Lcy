@@ -31,16 +31,29 @@ export const REGION_COUNTRY = { HK: 'HK', UK: 'GB', EU: 'DE', GLOBAL: 'OTHER' };
 
 const isBlank = (v) => v === '' || v === null || v === undefined;
 
-export function cardFeeFor(q, ctx) {
-  if (!isBlank(q.cardFeePct)) return num(q.cardFeePct);
-  return q.currency !== ctx.cardCurrency ? num(ctx.cardFeePct) : 0;
+export const DEFAULT_CARD = { id: 'default', name: '', fcc: 1.95, cbf: 1, cashback: 0, markup: 0 };
+
+// Cards from ctx; older callers pass a single cardFeePct instead.
+const cardsOf = (ctx) => (ctx.cards?.length ? ctx.cards : [{ ...DEFAULT_CARD, fcc: num(ctx.cardFeePct, DEFAULT_CARD.fcc), cbf: 0 }]);
+
+/** Is the merchant overseas? Paying such a merchant in HKD still attracts a cross-border fee (CBF). */
+export const isOverseas = (q) => (q.overseas === undefined || q.overseas === '' ? !!q.region && q.region !== 'HK' : !!q.overseas);
+
+/** Fee % a card charges on this quote: FX fee (+ rate markup) on foreign currency, CBF on overseas HKD. */
+export function cardFeePct(q, card, ctx) {
+  if (!isBlank(q.cardFeePct)) return num(q.cardFeePct); // legacy per-quote override
+  if (q.currency !== ctx.cardCurrency) return num(card.fcc) + num(card.markup);
+  return isOverseas(q) ? num(card.cbf) : 0;
 }
 
+// Kept for older callers: fee % with the first card.
+export const cardFeeFor = (q, ctx) => cardFeePct(q, cardsOf(ctx)[0], ctx);
+
 /**
- * @param q   quote: { price, currency, shipping, fees, fwd, fwdCur, mode,
- *                     removeVat, vatRate, refundPct, dutyPct, cardFeePct }
- * @param ctx { base, cardCurrency, cardFeePct, rates }  rates = hkdPer map
- * @returns { lines: [{k, v, cur, pct?}], total, cur }  total in ctx.base
+ * @param q   quote: { price, currency, region, overseas, shipping, fees, fwd, fwdCur, mode,
+ *                     removeVat, vatRate, refundPct, dutyPct, cardId }
+ * @param ctx { base, cardCurrency, cards, rates }  rates = hkdPer map
+ * @returns { lines: [{k, v, cur, pct?, card?}], total, cur, card }  total in ctx.base
  */
 export function landed(q, ctx) {
   const cur = q.currency || ctx.base;
@@ -57,7 +70,7 @@ export function landed(q, ctx) {
   if (ship) lines.push({ k: 'shipping', v: ship, cur });
   if (fees) lines.push({ k: 'fees', v: fees, cur });
 
-  // What the card is actually charged; FX fee applies to this.
+  // What the card is actually charged; card fees and cashback apply to this.
   const charged = goods + ship + fees;
 
   let refund = 0;
@@ -72,11 +85,18 @@ export function landed(q, ctx) {
     lines.push({ k: 'duty', v: duty, cur });
   }
 
-  const pct = cardFeeFor(q, ctx);
+  // Pick the chosen card, or the one that makes this purchase cheapest.
+  const cards = cardsOf(ctx);
+  const costWith = (card) => charged * (cardFeePct(q, card, ctx) - num(card.cashback)) / 100;
+  const chosen = cards.find((c) => c.id === q.cardId);
+  const card = chosen || cards.reduce((a, b) => (costWith(b) < costWith(a) ? b : a));
+  const pct = cardFeePct(q, card, ctx);
   const cardFee = (charged * pct) / 100;
-  if (cardFee) lines.push({ k: 'cardFee', v: cardFee, cur, pct });
+  const cashback = (charged * num(card.cashback)) / 100;
+  if (cardFee) lines.push({ k: 'cardFee', v: cardFee, cur, pct, card: card.name });
+  if (cashback) lines.push({ k: 'cashback', v: -cashback, cur, pct: num(card.cashback), card: card.name });
 
-  let total = convert(charged - refund + duty + cardFee, cur, ctx.base, ctx.rates);
+  let total = convert(charged - refund + duty + cardFee - cashback, cur, ctx.base, ctx.rates);
 
   const fwd = num(q.fwd);
   if (fwd) {
@@ -85,7 +105,7 @@ export function landed(q, ctx) {
     total += convert(fwd, fwdCur, ctx.base, ctx.rates);
   }
 
-  return { lines, total, cur: ctx.base };
+  return { lines, total, cur: ctx.base, card };
 }
 
 // Keep only the most recent quote per site + condition (ties: last logged wins).
