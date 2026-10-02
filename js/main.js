@@ -8,6 +8,7 @@ import { syncGist, mergeData } from './sync.js';
 import { buildChart, bindChart } from './chart.js';
 import { esc, num, uid, localDate, addDays, safeUrl } from './util.js';
 import { detectFromUrl, extractUrl, nameFromUrl } from './detect.js';
+import { alertsFor } from './alerts.js';
 import { expandOpw, searchOpw, opwQuotes, opwUpdates, productName, opwProductUrl, storeName } from './opw.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -76,7 +77,10 @@ function renderChrome(active) {
   $('#lang-toggle').setAttribute('aria-label', getLang() === 'zh' ? 'Switch to English' : '切換到中文');
   const tabs = [['search', 'search'], ['list', 'list'], ['calc', 'calc'], ['settings', 'settings']];
   $('#nav').innerHTML = tabs
-    .map(([r, k]) => `<a href="#/${r}" class="tab${active === r || (active === 'item' && r === 'list') ? ' active' : ''}"${active === r ? ' aria-current="page"' : ''}>${icon(k)}<span>${t('tab.' + r)}</span></a>`)
+    .map(([r, k]) => {
+      const due = r === 'list' ? dueItems().length : 0;
+      return `<a href="#/${r}" class="tab${active === r || (active === 'item' && r === 'list') ? ' active' : ''}"${active === r ? ' aria-current="page"' : ''}>${icon(k)}<span>${t('tab.' + r)}</span>${due ? `<span class="tab-badge" aria-label="${esc(t('due.title'))}">${due}</span>` : ''}</a>`;
+    })
     .join('');
   document.title = `${t('app')} · ${t('tab.' + (active === 'item' ? 'list' : active))}`;
 }
@@ -290,6 +294,33 @@ function bestOf(item, c) {
 }
 const targetBase = (item, c) => (num(item.target) > 0 ? convert(num(item.target), item.targetCur || c.base, c.base, c.rates) : NaN);
 
+// Items whose newest price is older than the "old price" setting (or that have none).
+function dueItems() {
+  const limit = num(state.settings.staleDays, 7);
+  return S.liveItems()
+    .map((item) => {
+      const qs = S.liveQuotes(item);
+      const age = qs.length ? Math.min(...qs.map((q) => ageDays(seenDate(q)))) : Infinity;
+      return { item, age };
+    })
+    .filter(({ age }) => age > limit)
+    .sort((a, b) => b.age - a.age);
+}
+
+function dueSection() {
+  const due = dueItems();
+  if (!due.length) return '';
+  return `<section class="card due">
+    <h2 class="section-h">${t('due.title')} <small>${due.length}</small></h2>
+    <p class="muted small">${t('due.hint', { n: state.settings.staleDays ?? 7 })}</p>
+    <ul class="due-list">${due.slice(0, 6).map(({ item, age }) => `<li>
+      <a href="#/item/${encodeURIComponent(item.id)}" class="due-name">${esc(item.name)}</a>
+      <span class="meta">${Number.isFinite(age) ? esc(t('age.days', { n: age })) : t('list.noQuote')}</span>
+      <button type="button" class="btn small" data-act="item-research" data-item="${esc(item.id)}">${t('due.go')}</button>
+    </li>`).join('')}</ul>
+  </section>`;
+}
+
 function viewList() {
   const c = ctx();
   const all = S.liveItems();
@@ -318,6 +349,7 @@ function viewList() {
     <h1>${t('list.title')}</h1>
     <button type="button" class="btn primary" data-act="item-add">+ ${t('list.add')}</button>
   </header>
+  ${dueSection()}
   ${cats.length > 1 ? `<div class="chips small">${chip('listCat', 'all', t('list.allCats'), ui.listCat === 'all')}${cats.map((k) => chip('listCat', k, t('cat.' + k), ui.listCat === k)).join('')}</div>` : ''}
   ${items.length ? `<ul class="items">${cards.join('')}</ul>` : `<p class="empty">${t('list.empty')}</p>`}`;
 }
@@ -428,6 +460,7 @@ function viewItem(id) {
     <h2 class="section-h">${t('item.trend')} <small>${t('item.trendSub', { cur: c.base })}</small></h2>
     ${distinctDays >= 2 ? '<div class="chart-wrap"><div class="c-tip" hidden></div></div>' : `<p class="muted">${t('item.trendNeed')}</p>`}
   </section>
+  ${alertSection(item, quotes)}
   <section>
     <div class="section-bar">
       <h2 class="section-h">${t('item.quotes')} <small>${quotes.length}</small></h2>
@@ -435,6 +468,31 @@ function viewItem(id) {
       ${canUnit ? `<div class="chips small" role="radiogroup">${chip('sortUnit', '0', t('item.sortTotal'), !ui.sortUnit)}${chip('sortUnit', '1', t('item.sortUnit'), ui.sortUnit)}</div>` : ''}
     </div>
     ${shown.length ? `<ol class="quotes">${shown.map((x, i) => quoteRow(x, i, { itemId: item.id })).join('')}</ol>` : `<p class="empty">${t('item.noQuotes')}</p>`}
+  </section>`;
+}
+
+function alertSection(item, quotes) {
+  if (item.opw) return `<section class="card"><h2 class="section-h">${t('alert.title')}</h2><p class="muted small">${t('alert.opw')}</p></section>`;
+  const list = alertsFor(item.cat);
+  if (!list.length) return '';
+  const params = item.search && item.search.cat === item.cat ? item.search : { q: item.name };
+  const sites = S.getSites({ includeDisabled: true });
+  const rows = list.map((a, i) => {
+    const site = a.site && sites.find((s) => s.id === a.site);
+    const built = site ? buildUrl(site.url, params) : { url: a.url, missing: [] };
+    const href = built.missing.length ? '' : safeUrl(built.url);
+    if (!href) return '';
+    const name = site ? site.name : a.name;
+    const pasteUrl = a.paste && quotes.map((q) => q.url).find((u) => u && a.paste.test(u));
+    const link = pasteUrl
+      ? `<button type="button" class="btn small" data-act="alert-paste" data-href="${esc(href)}" data-copy="${esc(pasteUrl)}">${t('alert.copyOpen')}</button>`
+      : `<a class="btn small" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${t('search.open')} ↗</a>`;
+    return `<li class="alert-row"><div><span class="site-name">${esc(name)}</span><span class="alert-how">${esc(t('how.' + a.how))}</span></div>${link}</li>`;
+  }).join('');
+  return `<section class="card">
+    <h2 class="section-h">${t('alert.title')}</h2>
+    <p class="muted small">${t('alert.intro')}</p>
+    <ul class="alert-list">${rows}</ul>
   </section>`;
 }
 
@@ -1031,6 +1089,10 @@ const actions = {
     S.applyQuoteUpdates(item.id, opwQuotes(p, opw.date, getLang()), [], opw.date, { opw: p.code, opwDate: opw.date });
     toast(t('search.tracked'));
     location.hash = `#/item/${encodeURIComponent(item.id)}`;
+  },
+  async 'alert-paste'(el) {
+    try { await navigator.clipboard.writeText(el.dataset.copy); toast(t('alert.copied')); } catch { /* still open the site */ }
+    window.open(el.dataset.href, '_blank', 'noopener');
   },
   'item-add'() { openItemDialog(null); },
   'item-edit'(el) { openItemDialog(S.getItem(el.dataset.item)); },
