@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-HK">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>格價簿 PriceBook</title>
+  <meta name="description" content="香港、英國、歐洲購物前格價：機票、酒店、咖啡器材、生活用品、超市貨品。">
+  <meta name="theme-color" content="#EDF0F2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0D141A" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="格價簿">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <a class="skip" href="#main">跳到內容 / Skip to content</a>
+  <header class="topbar">
+    <a id="brand" class="brand" href="#/search">格價簿</a>
+    <button type="button" id="lang-toggle" class="lang-toggle">EN</button>
+  </header>
+  <main id="main" tabindex="-1"></main>
+  <nav id="nav" class="nav" aria-label="Main"></nav>
+  <dialog id="dlg" aria-label="Dialog"></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <noscript>格價簿需要開啟 JavaScript。PriceBook needs JavaScript.</noscript>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

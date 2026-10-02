@@ -1,0 +1,54 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { buildUrl, DEFAULT_SITES, CATS, REGIONS, KINDS } from '../js/sites.js';
+
+test('keyword is URL-encoded', () => {
+  const { url, missing } = buildUrl('https://x.test/s?k={q}', { q: '1Zpresso J-Ultra 手搖' });
+  assert.equal(missing.length, 0);
+  assert.equal(url, 'https://x.test/s?k=1Zpresso%20J-Ultra%20%E6%89%8B%E6%90%96');
+});
+
+test('missing keyword is reported', () => {
+  assert.deepEqual(buildUrl('https://x.test/s?k={q}', { q: '  ' }).missing, ['q']);
+});
+
+test('optional return leg is dropped for one-way flights', () => {
+  const tpl = 'https://f.test/{from_l}/{to_l}/{depart_yymmdd}/[{return_yymmdd}/]';
+  const p = { from: 'hkg', to: 'LHR', depart: '2026-11-15', ret: '2026-11-30' };
+  assert.equal(buildUrl(tpl, p).url, 'https://f.test/hkg/lhr/261115/261130/');
+  assert.equal(buildUrl(tpl, { ...p, oneway: true }).url, 'https://f.test/hkg/lhr/261115/');
+  assert.equal(buildUrl(tpl, { ...p, ret: '' }).url, 'https://f.test/hkg/lhr/261115/');
+});
+
+test('required flight fields are reported, optional ones are not', () => {
+  const tpl = 'https://f.test/{from}-{to}/{depart}[/{return}]';
+  assert.deepEqual(buildUrl(tpl, { from: 'HKG' }).missing.sort(), ['depart', 'to']);
+});
+
+test('q_dash builds hyphenated slugs', () => {
+  assert.equal(buildUrl('https://k.test/s-{q_dash}/k0', { q: 'Comandante C40' }).url, 'https://k.test/s-comandante-c40/k0');
+});
+
+test('every default site is well-formed and builds an https URL', () => {
+  const ids = new Set();
+  const sample = { q: 'test', from: 'HKG', to: 'LHR', depart: '2026-11-15', ret: '2026-11-30', city: 'London', checkin: '2026-11-15', checkout: '2026-11-20', adults: 2 };
+  for (const s of DEFAULT_SITES) {
+    assert.ok(!ids.has(s.id), `duplicate id ${s.id}`);
+    ids.add(s.id);
+    assert.ok(REGIONS.includes(s.region), s.id);
+    assert.ok(KINDS.includes(s.kind), s.id);
+    assert.ok(s.cats.length && s.cats.every((c) => CATS.includes(c)), s.id);
+    const { url, missing } = buildUrl(s.url, sample);
+    assert.deepEqual(missing, [], `${s.id} missing ${missing}`);
+    assert.match(url, /^https:\/\/[^{}\[\]]+$/, s.id);
+  }
+});
+
+test('every category has sites in Hong Kong, the UK and Europe', () => {
+  for (const cat of CATS) {
+    for (const region of ['HK', 'UK', 'EU']) {
+      const hit = DEFAULT_SITES.some((s) => s.cats.includes(cat) && (s.region === region || s.region === 'GLOBAL'));
+      assert.ok(hit, `${cat} has no site for ${region}`);
+    }
+  }
+});
