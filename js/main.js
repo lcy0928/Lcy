@@ -10,6 +10,7 @@ import { esc, num, uid, localDate, addDays, safeUrl } from './util.js';
 import { detectFromUrl, extractUrl, nameFromUrl } from './detect.js';
 import { alertsFor } from './alerts.js';
 import { startScan, scanFile } from './scan.js';
+import { readPrices } from './ocr.js';
 import { expandOpw, searchOpw, opwQuotes, opwUpdates, productName, opwProductUrl, storeName } from './opw.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -67,6 +68,7 @@ function route() {
 const ICONS = {
   search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>',
   list: '<path d="M3.5 12.5V4.5a1 1 0 0 1 1-1h8l8 8-9 9z"/><circle cx="8" cy="8" r="1.6"/>',
+  camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
   barcode: '<path d="M4 6v12M7 6v12M10 6v12M14 6v12M16 6v12M20 6v12"/><path d="M2 4h3M19 4h3M2 20h3M19 20h3"/>',
   calc: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8.5 7.5h7M8.5 12h1M14.5 12h1M8.5 16h1M14.5 16h1"/>',
   settings: '<path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17" r="2"/>',
@@ -754,6 +756,11 @@ function quoteFormHtml(q, { needName, itemName, editing, refresh }) {
         ${field(t('quote.currency'), `<select name="currency">${curOptions(q.currency)}</select>`)}
         ${field(t('quote.cond'), `<select name="cond">${opt('new', t('cond.new'), q.cond !== 'used')}${opt('used', t('cond.used'), q.cond === 'used')}</select>`)}
       </div>
+      <div class="ocr-row">
+        <label class="btn small">${icon('camera')} ${t('ocr.button')}<input type="file" accept="image/*" capture="environment" data-act="ocr" hidden></label>
+        <span class="muted small" id="ocr-status" aria-live="polite"></span>
+      </div>
+      <div class="chips small" id="ocr-chips"></div>
       <div class="qty-row">
         ${field(t('quote.qty'), numIn('qty', q.qty, 'min="0"'))}
         ${field(t('quote.unit'), `<select name="unit">${UNITS.map((u) => opt(u, t('unit.' + u), u === (q.unit || 'g'))).join('')}</select>`)}
@@ -1151,6 +1158,13 @@ const actions = {
     window.open(el.dataset.href, '_blank', 'noopener');
   },
   scan() { openScanner(); },
+  'ocr-pick'(el) {
+    const form = $('form', dlg);
+    form.elements.price.value = el.dataset.v;
+    if (el.dataset.cur) form.elements.currency.value = el.dataset.cur;
+    $$('#ocr-chips .chip').forEach((c) => c.setAttribute('aria-pressed', String(c === el)));
+    updateQuotePreview(form);
+  },
   'item-add'() { openItemDialog(null); },
   'item-edit'(el) { openItemDialog(S.getItem(el.dataset.item)); },
   'item-delete'(el) {
@@ -1292,6 +1306,21 @@ document.addEventListener('click', (e) => {
 document.addEventListener('change', async (e) => {
   const el = e.target;
   if (el.dataset.act === 'site-toggle') return actions['site-toggle'](el);
+  if (el.dataset.act === 'ocr' && el.files?.[0]) {
+    const status = $('#ocr-status');
+    const chips = $('#ocr-chips');
+    status.textContent = t('ocr.loading');
+    chips.innerHTML = '';
+    try {
+      const found = await readPrices(el.files[0], (p) => { status.textContent = t('ocr.reading', { pct: Math.round(p * 100) }); });
+      status.textContent = found.length ? t('ocr.pick') : t('ocr.none');
+      chips.innerHTML = found.map((c) => `<button type="button" class="chip" data-act="ocr-pick" data-v="${c.value}" data-cur="${esc(c.currency)}">${esc(c.currency ? fmt(c.value, c.currency, getLang()) : String(c.value))}</button>`).join('');
+    } catch (e) {
+      status.textContent = t('ocr.fail', { err: e.message || e.name });
+    }
+    el.value = '';
+    return;
+  }
   if (el.dataset.act === 'scan-photo' && el.files?.[0]) {
     const status = $('#scan-status');
     if (status) status.textContent = t('scan.loading');

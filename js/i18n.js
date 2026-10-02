@@ -66,6 +66,9 @@ const zh = {
   'scan.button': '掃描條碼', 'scan.title': '掃描條碼', 'scan.hint': '將條碼對準框入面',
   'scan.photo': '用相片', 'scan.loading': '載入緊掃描器…', 'scan.found': '掃到：{code}',
   'scan.fail': '用唔到相機（{err}）。可以撳「用相片」影一張條碼相。', 'scan.none': '相入面搵唔到條碼',
+  'ocr.button': '影價錢牌', 'ocr.loading': '載入緊文字辨識（第一次要下載幾 MB）…',
+  'ocr.reading': '辨識緊… {pct}%', 'ocr.pick': '撳一個價填入：', 'ocr.none': '搵唔到價錢。iPhone 亦可以用相機嘅「原況文字」直接複製價錢再貼入。',
+  'ocr.fail': '辨識唔到（{err}）',
   'quote.card': '付款卡', 'quote.overseas': '海外商戶（用港幣付款都會收跨境費）',
 
   'list.title': '心水清單',
@@ -264,6 +267,9 @@ const en = {
   'scan.button': 'Scan barcode', 'scan.title': 'Scan a barcode', 'scan.hint': 'Point the camera at the barcode',
   'scan.photo': 'Use a photo', 'scan.loading': 'Loading the scanner…', 'scan.found': 'Scanned: {code}',
   'scan.fail': 'Camera unavailable ({err}). Tap “Use a photo” to take a picture of the barcode.', 'scan.none': 'No barcode found in the photo',
+  'ocr.button': 'Read price tag', 'ocr.loading': 'Loading the text reader (a few MB the first time)…',
+  'ocr.reading': 'Reading… {pct}%', 'ocr.pick': 'Tap a price to use it:', 'ocr.none': 'No price found. On iPhone you can also copy it with Live Text in the Camera and paste it in.',
+  'ocr.fail': 'Couldn’t read it ({err})',
   'quote.card': 'Pay with', 'quote.overseas': 'Overseas merchant (cross-border fee applies even in HKD)',
 
   'list.title': 'Watchlist',

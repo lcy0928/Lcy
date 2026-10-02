@@ -346,6 +346,8 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--accent);
 .badge.stale-badge { background: var(--sold-tint); color: var(--sold-ink); }
 .warn-text { color: var(--sold-ink); }
 .breakdown tr.warn th { color: var(--sold-ink); }
+.ocr-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#ocr-chips:empty { display: none; }
 .qty-row { display: grid; grid-template-columns: 1fr 96px; gap: 12px; }
 .grid-3.tight { margin-top: 0; grid-template-columns: repeat(3, 1fr); }
 .q-total {
