@@ -48,8 +48,11 @@ const median = (xs) => {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 };
 
-/** Median valid price per item. ONS marks usable quotes with validity 3 or 4. */
-export function aggregateQuotes(csvText, { minQuotes = 5 } = {}) {
+/**
+ * Median price per item. ONS marks usable quotes with validity 3 or 4; when a file
+ * uses other codes, every quote with a price counts (and the codes are logged).
+ */
+export function aggregateQuotes(csvText, { minQuotes = 5, log = () => {} } = {}) {
   const rows = parseCsv(csvText);
   const head = rows.shift().map((h) => h.trim().toLowerCase());
   const col = (name) => head.indexOf(name);
@@ -57,11 +60,15 @@ export function aggregateQuotes(csvText, { minQuotes = 5 } = {}) {
   const iDesc = col('item_desc') >= 0 ? col('item_desc') : col('cs_desc');
   const [iPrice, iValid] = [col('price'), col('validity')];
   if (iDesc < 0 || iPrice < 0) throw new Error(`unexpected columns: ${head.join(',')}`);
+  const codes = {};
+  for (const r of rows) codes[(r[iValid] || '').trim()] = (codes[(r[iValid] || '').trim()] || 0) + 1;
+  const useValidity = iValid >= 0 && (codes['3'] || 0) + (codes['4'] || 0) > 0;
+  if (!useValidity) log(`validity codes ${JSON.stringify(codes)}: using every priced quote`);
   const by = new Map();
   for (const r of rows) {
     const desc = (r[iDesc] || '').trim();
-    const price = Number(r[iPrice]);
-    const valid = iValid < 0 || ['3', '4'].includes((r[iValid] || '').trim());
+    const price = Number(String(r[iPrice] || '').replace(/[£,\s]/g, ''));
+    const valid = !useValidity || ['3', '4'].includes((r[iValid] || '').trim());
     if (!desc || !valid || !(price > 0)) continue;
     if (!by.has(desc)) by.set(desc, []);
     by.get(desc).push(price);
@@ -116,8 +123,12 @@ async function latestQuotes() {
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
   const [out, csv] = process.argv.slice(2);
   const got = csv ? { text: readFileSync(csv, 'utf8'), month: editionMonth(csv) } : await latestQuotes();
-  const items = aggregateQuotes(got.text);
-  if (items.length < 50) throw new Error(`only ${items.length} items`);
+  const items = aggregateQuotes(got.text, { log: console.log });
+  if (items.length < 50) {
+    // Show what the file looks like so the parser can be adjusted.
+    console.log(got.text.split('\n').slice(0, 4).join('\n'));
+    throw new Error(`only ${items.length} items`);
+  }
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, JSON.stringify({ v: 1, month: got.month, items }));
   console.log(`${items.length} items (${got.month}) → ${out}${got.source ? ` from ${got.source}` : ''}`);

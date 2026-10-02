@@ -28,6 +28,9 @@ jobs:
         with:
           node-version: 22
       - run: npm test
+      - name: Check the ONS price data still parses (informational)
+        continue-on-error: true
+        run: node scripts/ons-build.mjs "$RUNNER_TEMP/ons.json"
 
   deploy:
     needs: test
