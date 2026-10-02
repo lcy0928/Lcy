@@ -34,6 +34,9 @@ jobs:
       - name: Check Sainsbury's prices can still be read (informational, 3 items)
         continue-on-error: true
         run: node scripts/sainsburys-build.mjs "$RUNNER_TEMP/sainsburys.json" --check
+      - name: Probe Morrisons / Lidl GB access (temporary)
+        continue-on-error: true
+        run: node scripts/uk-probe.mjs
 
   deploy:
     needs: test
