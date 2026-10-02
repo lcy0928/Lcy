@@ -95,7 +95,7 @@ export function setSetting(key, value) {
 export function getSites({ includeDisabled = false } = {}) {
   const out = DEFAULT_SITES.map((s) => {
     const o = state.siteState[s.id] || {};
-    return { ...s, ...(o.name ? { name: o.name } : {}), ...(o.url ? { url: o.url } : {}), enabled: o.enabled !== false, builtin: true };
+    return { ...s, ...(o.name ? { name: o.name } : {}), ...(o.url ? { url: o.url, via: '' } : {}), enabled: o.enabled !== false, check: o.check || '', builtin: true };
   });
   for (const c of state.customSites) if (!c.deleted) out.push({ ...c, enabled: c.enabled !== false, builtin: false });
   return includeDisabled ? out : out.filter((s) => s.enabled);

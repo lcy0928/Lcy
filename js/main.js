@@ -19,7 +19,7 @@ const main = $('#main');
 const dlg = $('#dlg');
 
 // View-only UI state (not persisted)
-const ui = { listCat: 'all', showAll: false, sortUnit: false, siteCat: 'all', conv: { amt: '100', cur: 'GBP' }, chart: null, dialog: null };
+const ui = { testCat: 'all', listCat: 'all', showAll: false, sortUnit: false, siteCat: 'all', conv: { amt: '100', cur: 'GBP' }, chart: null, dialog: null };
 let installPrompt = null;
 let opw = null; // Consumer Council data, loaded from data/opw.json
 
@@ -94,11 +94,11 @@ function render() {
   setLang(state.settings.lang);
   document.documentElement.lang = locale();
   ui.chart = null;
-  const views = { search: viewSearch, list: viewList, item: () => viewItem(r.arg), calc: viewCalc, settings: viewSettings };
+  const views = { search: viewSearch, list: viewList, item: () => viewItem(r.arg), calc: viewCalc, settings: viewSettings, linktest: viewLinkTest };
   const view = views[r.name] || viewSearch;
   main.innerHTML = view();
   main.dataset.view = r.name;
-  renderChrome(views[r.name] ? r.name : 'search');
+  renderChrome(r.name === 'linktest' ? 'settings' : views[r.name] ? r.name : 'search');
   afterRender();
 }
 
@@ -271,6 +271,8 @@ function siteRow(site, params) {
     <div class="site-main">
       <span class="site-name">${esc(site.name)}</span>
       <span class="badge kind-${esc(site.kind)}">${t('kind.' + site.kind)}</span>
+      ${site.via === 'google' ? `<span class="badge">${t('site.viaGoogle')}</span>` : ''}
+      ${site.check === 'bad' ? `<span class="badge warn-badge">${t('test.badBadge')}</span>` : ''}
       ${missing.length ? `<span class="site-need">${t('search.need', { fields: need })}</span>` : ''}
     </div>
     <div class="site-actions">${open}<button type="button" class="btn small quiet" data-act="log-from-search" data-site="${esc(site.id)}">${t('search.log')}</button></div>
@@ -675,6 +677,7 @@ function viewSettings() {
     <ul class="site-list">${siteRows()}</ul>
     <div class="actions">
       <button type="button" class="btn" data-act="site-add">+ ${t('set.sitesAdd')}</button>
+      <a class="btn" href="#/linktest">${t('test.open')}</a>
       <button type="button" class="btn quiet" data-act="sites-reset">${t('set.sitesReset')}</button>
     </div>
   </section>
@@ -694,6 +697,52 @@ function viewSettings() {
     <h2 class="section-h">${t('set.about')}</h2>
     <p class="muted small">${t('set.aboutText')}</p>
   </section>`;
+}
+
+// ---------- link test ----------
+const TEST_Q = { coffee: 'Comandante C40', home: 'towel', grocery: 'milk', electronics: 'iPad', other: 'Lego' };
+
+function testParams(cat) {
+  const depart = addDays(localDate(), 30);
+  return { q: TEST_Q[cat] || 'coffee', from: 'HKG', to: 'LHR', depart, ret: addDays(depart, 14), city: 'London', checkin: depart, checkout: addDays(depart, 2), adults: 2 };
+}
+
+function testSites() {
+  return S.getSites({ includeDisabled: true }).filter((s) => ui.testCat === 'all' || s.cats.includes(ui.testCat));
+}
+
+function viewLinkTest() {
+  const sites = testSites();
+  const done = sites.filter((s) => s.check).length;
+  const bad = sites.filter((s) => s.check === 'bad').length;
+  const rows = sites.map((s) => {
+    const cat = ui.testCat === 'all' ? s.cats[0] : ui.testCat;
+    const href = safeUrl(buildUrl(s.url, testParams(cat)).url);
+    return `<li class="test-row${s.check ? ' is-' + s.check : ''}">
+      <div class="test-info">
+        <span class="site-name">${esc(s.name)}</span>
+        <span class="meta">${t('region.' + s.region)} · ${t('cat.' + cat)}${s.via === 'google' ? ` · ${t('site.viaGoogle')}` : ''}</span>
+      </div>
+      <div class="test-actions">
+        ${href ? `<a class="btn small" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${t('search.open')} ↗</a>` : ''}
+        <button type="button" class="btn small${s.check === 'ok' ? ' on-ok' : ''}" data-act="test-mark" data-site="${esc(s.id)}" data-v="ok" aria-pressed="${s.check === 'ok'}" aria-label="${esc(t('test.ok'))}">✓</button>
+        <button type="button" class="btn small${s.check === 'bad' ? ' on-bad' : ''}" data-act="test-mark" data-site="${esc(s.id)}" data-v="bad" aria-pressed="${s.check === 'bad'}" aria-label="${esc(t('test.bad'))}">✗</button>
+      </div>
+    </li>`;
+  }).join('');
+  return `
+  <a class="back" href="#/settings">← ${t('tab.settings')}</a>
+  <header class="page-head"><h1>${t('test.title')}</h1></header>
+  <p class="muted">${t('test.intro')}</p>
+  <div class="section-bar">
+    <select data-ui="testCat" aria-label="${esc(t('itemDlg.cat'))}">${opt('all', t('list.allCats'), ui.testCat === 'all')}${CATS.map((c) => opt(c, t('cat.' + c), ui.testCat === c)).join('')}</select>
+    <span class="meta">${esc(t('test.progress', { done, total: sites.length, bad }))}</span>
+  </div>
+  <ul class="test-list">${rows}</ul>
+  <div class="actions">
+    <button type="button" class="btn primary" data-act="test-copy"${bad ? '' : ' disabled'}>${t('test.copy')}</button>
+    <button type="button" class="btn quiet" data-act="test-clear">${t('test.clear')}</button>
+  </div>`;
 }
 
 // ---------- dialogs ----------
@@ -1165,6 +1214,21 @@ const actions = {
     $$('#ocr-chips .chip').forEach((c) => c.setAttribute('aria-pressed', String(c === el)));
     updateQuotePreview(form);
   },
+  'test-mark'(el) {
+    const site = S.getSites({ includeDisabled: true }).find((s) => s.id === el.dataset.site);
+    const v = site?.check === el.dataset.v ? '' : el.dataset.v;
+    S.updateSite(el.dataset.site, { check: v, checkedAt: Date.now() });
+    softRender();
+  },
+  async 'test-copy'() {
+    const bad = S.getSites({ includeDisabled: true }).filter((s) => s.check === 'bad');
+    const text = `${t('test.copyHead')}\n${bad.map((s) => `- ${s.name} (${s.id}): ${s.url}`).join('\n')}`;
+    try { await navigator.clipboard.writeText(text); toast(t('test.copied')); } catch { prompt(t('test.copy'), text); }
+  },
+  'test-clear'() {
+    for (const s of S.getSites({ includeDisabled: true })) if (s.check) S.updateSite(s.id, { check: '' });
+    render();
+  },
   'item-add'() { openItemDialog(null); },
   'item-edit'(el) { openItemDialog(S.getItem(el.dataset.item)); },
   'item-delete'(el) {
@@ -1363,6 +1427,11 @@ document.addEventListener('change', async (e) => {
     const manual = { ...(state.settings.manualRates || {}) };
     if (v > 0) manual[el.dataset.rate] = v; else delete manual[el.dataset.rate];
     S.setSetting('manualRates', manual);
+    return;
+  }
+  if (el.dataset.ui === 'testCat') {
+    ui.testCat = el.value;
+    render();
     return;
   }
   if (el.dataset.ui === 'siteCat') {

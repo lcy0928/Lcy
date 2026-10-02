@@ -11,7 +11,6 @@ export const ALERTS = {
   ],
   hotel: [
     { site: 'ghotels', how: 'ghotels' },
-    { site: 'kayak-hk-h', how: 'kayak' },
   ],
   product: [
     { name: 'camelcamelcamel UK', url: 'https://uk.camelcamelcamel.com/', how: 'camel', paste: /amazon\.co\.uk/ },

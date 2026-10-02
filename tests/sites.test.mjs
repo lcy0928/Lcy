@@ -52,3 +52,21 @@ test('every category has sites in Hong Kong, the UK and Europe', () => {
     }
   }
 });
+
+import { ALERTS } from '../js/alerts.js';
+
+test('alert shortcuts point at existing sites', () => {
+  const ids = new Set(DEFAULT_SITES.map((s) => s.id));
+  for (const list of Object.values(ALERTS)) for (const a of list) assert.ok(a.url || ids.has(a.site), `missing ${a.site}`);
+});
+
+test('Google site-search entries keep the store domain', () => {
+  for (const s of DEFAULT_SITES.filter((x) => x.via === 'google')) {
+    assert.ok(s.domain && s.url.includes(`site%3A${s.domain}`), s.id);
+  }
+});
+
+test('Consumer Council search uses the highlight path', () => {
+  const opw = DEFAULT_SITES.find((s) => s.id === 'opw');
+  assert.equal(buildUrl(opw.url, { q: '牛奶' }).url, 'https://online-price-watch.consumer.org.hk/opw/search/highlight:%E7%89%9B%E5%A5%B6');
+});

@@ -309,6 +309,17 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--accent);
   background: var(--bad); color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;
 }
 
+/* ---------- link test ---------- */
+.test-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.test-row { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 10px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.test-info { display: flex; flex-direction: column; min-width: 0; }
+.test-actions { display: flex; gap: 4px; margin-left: auto; }
+.btn.on-ok { background: var(--good-tint); border-color: var(--good); color: var(--good); }
+.btn.on-bad { background: var(--bad); border-color: var(--bad); color: #fff; }
+.test-row.is-bad .site-name { color: var(--bad); }
+.badge.warn-badge { background: var(--sold-tint); color: var(--sold-ink); }
+.btn[disabled] { opacity: 0.45; pointer-events: none; }
+
 /* ---------- watchlist ---------- */
 .items { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .item-card {
