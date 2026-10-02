@@ -159,6 +159,17 @@ export function templateValues(p = {}) {
   };
 }
 
+/** The site's own home page (for when the search details are not filled in yet). */
+export function siteHome(site) {
+  if (site.domain) return `https://www.${site.domain.replace(/^www\./, '')}/`;
+  try {
+    const u = new URL(site.url.replace(/\[[^\]]*\]/g, '').replace(/\{[^}]+\}/g, 'x'));
+    return `${u.origin}/`;
+  } catch {
+    return '';
+  }
+}
+
 const keysIn = (s) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
 
 /** @returns {{url: string, missing: string[]}} missing = required placeholders with no value */

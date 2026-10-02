@@ -1,7 +1,7 @@
 import { t, setLang, getLang } from './i18n.js';
 import * as S from './store.js';
 import { state } from './store.js';
-import { CATS, PRODUCT_CATS, REGIONS, KINDS, REGION_CURRENCY, buildUrl } from './sites.js';
+import { CATS, PRODUCT_CATS, REGIONS, KINDS, REGION_CURRENCY, buildUrl, siteHome } from './sites.js';
 import { CURRENCIES, convert, effectiveRates, fetchRates, fetchRatesOn, fxSnapshot, ratesAt, fmt, fmtParts } from './currency.js';
 import { landed, latestPerSite, rankQuotes, COUNTRIES, REGION_COUNTRY, MODES, DEFAULT_CARD, isOverseas, UNITS, unitPrice, ageDays } from './landed.js';
 import { syncGist, mergeData } from './sync.js';
@@ -197,7 +197,13 @@ function searchResults() {
   const groups = REGIONS.filter((r) => s.regions.includes(r))
     .map((r) => [r, sites.filter((x) => x.region === r)])
     .filter(([, l]) => l.length);
-  return `${opwPanel()}<p class="hint">${t('search.hint')}</p>${groups.map(([r, list]) => `
+  const missing = [...new Set(sites.flatMap((x) => buildUrl(x.url, params).missing))];
+  const need = [...new Set(missing.map((k) => t(MISSING_LABEL[k] || k)))].join('、');
+  const banner = missing.length
+    ? `<div class="need-banner" role="status"><p>${t('search.needBanner', { fields: esc(need) })}</p>
+        <button type="button" class="btn small primary" data-act="focus-search">${t('search.fillIn')}</button></div>`
+    : `<p class="hint">${t('search.hint')}</p>`;
+  return `${opwPanel()}${banner}${groups.map(([r, list]) => `
     <section class="region">
       <h2 class="region-h"><span>${t('region.' + r)}</span><small>${t('search.count', { n: list.length })}</small></h2>
       <ul class="sites">${list.map((site) => siteRow(site, params)).join('')}</ul>
@@ -263,17 +269,19 @@ async function loadOpw() {
 function siteRow(site, params) {
   const { url, missing } = buildUrl(site.url, params);
   const href = safeUrl(url);
-  const need = [...new Set(missing.map((k) => t(MISSING_LABEL[k] || k)))].join('、');
-  const open = missing.length || !href
-    ? `<span class="btn small disabled" aria-disabled="true">${t('search.open')}</span>`
-    : `<a class="btn small" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${t('search.open')}<span aria-hidden="true"> ↗</span></a>`;
+  // Without the search details, open the site's home page instead of a dead button.
+  const home = missing.length || !href ? safeUrl(siteHome(site)) : '';
+  const open = home
+    ? `<a class="btn small quiet" href="${esc(home)}" target="_blank" rel="noopener noreferrer">${t('search.home')}<span aria-hidden="true"> ↗</span></a>`
+    : href
+      ? `<a class="btn small" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${t('search.open')}<span aria-hidden="true"> ↗</span></a>`
+      : '';
   return `<li class="site">
     <div class="site-main">
       <span class="site-name">${esc(site.name)}</span>
       <span class="badge kind-${esc(site.kind)}">${t('kind.' + site.kind)}</span>
       ${site.via === 'google' ? `<span class="badge">${t('site.viaGoogle')}</span>` : ''}
       ${site.check === 'bad' ? `<span class="badge warn-badge">${t('test.badBadge')}</span>` : ''}
-      ${missing.length ? `<span class="site-need">${t('search.need', { fields: need })}</span>` : ''}
     </div>
     <div class="site-actions">${open}<button type="button" class="btn small quiet" data-act="log-from-search" data-site="${esc(site.id)}">${t('search.log')}</button></div>
   </li>`;
@@ -1222,6 +1230,12 @@ const actions = {
     window.open(el.dataset.href, '_blank', 'noopener');
   },
   scan() { openScanner(); },
+  'focus-search'() {
+    const el = $$('.search-form [data-bind]').find((x) => !x.value && !x.disabled && x.type !== 'checkbox') || $('.search-form [data-bind]');
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.focus();
+  },
   'ocr-pick'(el) {
     const form = $('form', dlg);
     form.elements.price.value = el.dataset.v;
@@ -1574,5 +1588,18 @@ lastAutoSync = Date.now();
 doSync({ quiet: true }).then(loadOpw);
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  navigator.serviceWorker.register('./sw.js').catch(() => {});
+  // When a new version takes over, reload once so the app never runs stale code.
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading || dlg.open) return;
+    reloading = true;
+    location.reload();
+  });
+  navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
+    .then((reg) => {
+      // Home-screen apps can stay open for days; look for updates whenever they come back.
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+    })
+    .catch(() => {});
 }
