@@ -910,6 +910,20 @@ function openQuote({ itemId = '', quote = null, preset = {}, scratch = false, it
   if (refresh) { form.elements.price.focus(); form.elements.price.select(); }
 }
 
+// A store outside Hong Kong usually means ordering online for delivery here
+// (not for flights or hotels, whose price is the price).
+function applyRegionDefaults(form, region) {
+  const f = form.elements;
+  const cat = ui.dialog?.cat || state.search.cat;
+  if (cat === 'flight' || cat === 'hotel') return;
+  if (region !== 'HK' && f.mode.value === 'local') {
+    f.mode.value = 'online';
+    f.removeVat.checked = region === 'UK' || region === 'EU';
+  } else if (region === 'HK' && f.mode.value === 'online') {
+    f.mode.value = 'local';
+  }
+}
+
 // Fill the quote form from a recognised link. Only empty fields are filled
 // unless `force` is set (an explicit paste).
 function applyDetection(form, det, force = false) {
@@ -923,6 +937,7 @@ function applyDetection(form, det, force = false) {
     f.cond.value = det.cond;
     f.country.value = REGION_COUNTRY[det.region];
     f.overseas.checked = det.region !== 'HK';
+    applyRegionDefaults(form, det.region);
     f.country.dispatchEvent(new Event('change', { bubbles: true }));
   }
   if (f.itemName && !f.itemName.value.trim()) f.itemName.value = nameFromUrl(det.url);
@@ -1454,6 +1469,8 @@ document.addEventListener('change', async (e) => {
         form.elements.region.value = site.region;
         form.elements.currency.value = site.cur || REGION_CURRENCY[site.region];
         form.elements.country.value = REGION_COUNTRY[site.region];
+        form.elements.overseas.checked = site.region !== 'HK';
+        applyRegionDefaults(form, site.region);
         form.elements.country.dispatchEvent(new Event('change', { bubbles: true }));
       }
     }
