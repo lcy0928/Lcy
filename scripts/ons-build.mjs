@@ -49,8 +49,9 @@ const median = (xs) => {
 };
 
 /**
- * Median price per item. ONS marks usable quotes with validity 3 or 4; when a file
- * uses other codes, every quote with a price counts (and the codes are logged).
+ * Median price per item. ONS marks usable quotes with validity 3 or 4 (until 2025)
+ * or True (since); when a file uses other codes, every quote with a price counts
+ * (and the codes are logged).
  */
 export function aggregateQuotes(csvText, { minQuotes = 5, log = () => {} } = {}) {
   const rows = parseCsv(csvText);
@@ -60,15 +61,17 @@ export function aggregateQuotes(csvText, { minQuotes = 5, log = () => {} } = {})
   const iDesc = col('item_desc') >= 0 ? col('item_desc') : col('cs_desc');
   const [iPrice, iValid] = [col('price'), col('validity')];
   if (iDesc < 0 || iPrice < 0) throw new Error(`unexpected columns: ${head.join(',')}`);
+  const VALID = ['3', '4', 'true'];
+  const code = (r) => (r[iValid] || '').trim().toLowerCase();
   const codes = {};
-  for (const r of rows) codes[(r[iValid] || '').trim()] = (codes[(r[iValid] || '').trim()] || 0) + 1;
-  const useValidity = iValid >= 0 && (codes['3'] || 0) + (codes['4'] || 0) > 0;
+  for (const r of rows) codes[code(r)] = (codes[code(r)] || 0) + 1;
+  const useValidity = iValid >= 0 && VALID.some((c) => codes[c]);
   if (!useValidity) log(`validity codes ${JSON.stringify(codes)}: using every priced quote`);
   const by = new Map();
   for (const r of rows) {
     const desc = (r[iDesc] || '').trim();
     const price = Number(String(r[iPrice] || '').replace(/[£,\s]/g, ''));
-    const valid = !useValidity || ['3', '4'].includes((r[iValid] || '').trim());
+    const valid = !useValidity || VALID.includes(code(r));
     if (!desc || !valid || !(price > 0)) continue;
     if (!by.has(desc)) by.set(desc, []);
     by.get(desc).push(price);
