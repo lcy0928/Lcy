@@ -5,7 +5,7 @@
 //   - Dutch and Austrian supermarket open data (js/market.js)
 //   - Open Prices by Open Food Facts: crowd-sourced shelf prices, read live (UK sites)
 //   - ONS average prices: UK-wide typical price of common items, monthly (data/ons.json)
-//   - Sainsbury's: cheapest product for 50 everyday items, daily (data/sainsburys.json)
+//   - Morrisons: cheapest product for 50 everyday items, daily (data/morrisons.json)
 //   - prices you logged yourself
 // Each function here is pure, so the matching can be tested without the app.
 

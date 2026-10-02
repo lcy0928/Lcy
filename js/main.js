@@ -533,8 +533,8 @@ function marketPanel(m) {
 const opLive = { term: '', state: '', list: [] };
 let ons = null; // UK typical prices from ONS, data/ons.json
 let onsState = '';
-let sb = null; // Sainsbury's daily basket, data/sainsburys.json
-let sbState = '';
+let basket = null; // Morrisons prices of 50 everyday items, daily: data/morrisons.json
+let basketState = '';
 
 const ukGroceryWanted = () => {
   const s = state.search;
@@ -552,11 +552,11 @@ function ensureUkPrices() {
       .catch(() => { onsState = 'fail'; })
       .finally(refreshSearch);
   }
-  if (!sbState) {
-    sbState = 'loading';
-    getJson('data/sainsburys.json')
-      .then((d) => { sb = d; sbState = 'ok'; })
-      .catch(() => { sbState = 'fail'; })
+  if (!basketState) {
+    basketState = 'loading';
+    getJson('data/morrisons.json')
+      .then((d) => { basket = d; basketState = 'ok'; })
+      .catch(() => { basketState = 'fail'; })
       .finally(refreshSearch);
   }
   // Wait for the English words before asking Open Prices.
@@ -630,14 +630,14 @@ function dataPrice(site, pc) {
       stale: !inFresh, storeStale: !inFresh, unit: p.pu && p.pu.per !== 'pc' ? `${fmt(p.pu.value, 'EUR', lang)}/${t('mkt.per.' + p.pu.per)}` : '',
     };
   }
-  if (site.id === 'sainsburys' && ukGroceryWanted()) {
+  if (site.id === 'morrisons' && ukGroceryWanted()) {
     // Today's cheapest of the daily basket item; other searches fall back to Open Prices.
-    if (sbState === 'loading') return 'loading';
-    const x = basketMatch(sb, termFor('en'));
+    if (basketState === 'loading') return 'loading';
+    const x = basketMatch(basket, termFor('en'));
     if (x) {
       return {
-        price: x.price, cur: 'GBP', name: x.name, url: x.url, src: "Sainsbury's", date: sb.date,
-        stale: ageDays(sb.date) > 3, unit: x.per ? `${fmt(x.unit, 'GBP', lang)}/${t('mkt.per.' + x.per)}` : '',
+        price: x.price, cur: 'GBP', name: x.name, url: x.url, src: 'Morrisons', date: basket.date,
+        stale: ageDays(basket.date) > 3, unit: x.per ? `${fmt(x.unit, 'GBP', lang)}/${t('mkt.per.' + x.per)}` : '',
       };
     }
   }
