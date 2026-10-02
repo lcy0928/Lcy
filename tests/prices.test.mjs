@@ -91,6 +91,17 @@ test('ONS build: CSV parsing and median of valid quotes', () => {
   const now = ['quote_date,cs_id,cs_desc,validity,shop_code,price'];
   for (const p of [1, 2, 3, 4, 5]) now.push(`202608,9,Orange juice 1 litre,4,1,${p}`);
   assert.deepEqual(aggregateQuotes(now.join('\n')), [['Orange juice 1 litre', 3, 5]]);
+  // Since 2025 validity is True/False.
+  const tf = ['quote_date,cs_id,cs_desc,validity,shop_code,price'];
+  for (const p of [1, 2, 3, 4, 5]) tf.push(`202608,9,Milk 2 pints,True,1,${p}`);
+  tf.push('202608,9,Milk 2 pints,False,1,99');
+  assert.deepEqual(aggregateQuotes(tf.join('\n')), [['Milk 2 pints', 3, 5]]);
+  // Unknown validity codes: every priced quote counts.
+  const other = ['quote_date,cs_id,cs_desc,validity,shop_code,price'];
+  for (const p of [1, 2, 3, 4, 5]) other.push(`202608,9,Tea bags,V,1,"£${p}.00"`);
+  const logged = [];
+  assert.deepEqual(aggregateQuotes(other.join('\n'), { log: (m) => logged.push(m) }), [['Tea bags', 3, 5]]);
+  assert.match(logged[0], /validity codes/);
   assert.equal(editionMonth('/economy/x/pricequotesjune2026'), '2026-06');
   assert.equal(editionMonth('upload-pricequotes202608.csv'), '2026-08');
   assert.equal(editionMonth('/economy/x/itemindices'), '');
