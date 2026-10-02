@@ -14,6 +14,7 @@ import { startScan, scanFile } from './scan.js';
 import { readPrices } from './ocr.js';
 import { expandOpw, searchOpw, opwQuotes, opwUpdates, productName, opwProductUrl, storeName } from './opw.js';
 import { APP_VERSION } from './version.js';
+import { SITE_OPW, SITE_MARKET, SITE_BRAND, opwBest, marketBest, openProductsUrl, openPricesUrl, parseOpenPrices, openBest, onsMatch, loggedBest } from './prices.js';
 import { MARKETS, STORE_COUNTRY, expandMarket, searchMarket, marketUpdates, productLink, storeName as marketStore } from './market.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -322,10 +323,13 @@ function searchResults() {
     ? `<div class="need-banner" role="status"><p>${t('search.needBanner', { fields: esc(need) })}</p>
         <button type="button" class="btn small primary" data-act="focus-search">${t('search.fillIn')}</button></div>`
     : `<p class="hint">${t('search.hint')}</p>`;
+  ensureUkPrices();
+  const pc = priceContext();
   return `${opwPanel()}${marketPanels()}${banner}${groups.map(([r, list]) => `
     <section class="region">
       <h2 class="region-h"><span>${t('region.' + r)}</span><small>${t('search.count', { n: list.length })}</small></h2>
-      <ul class="sites">${list.map((site) => siteRow(site, paramsFor(site))).join('')}</ul>
+      ${r === 'UK' ? onsNote() : ''}
+      <ul class="sites">${list.map((site) => siteRow(site, paramsFor(site), pc)).join('')}</ul>
     </section>`).join('')}`;
 }
 
@@ -516,7 +520,158 @@ function marketPanel(m) {
   </section>`;
 }
 
-function siteRow(site, params) {
+// ---- current price beside each site ----
+// Open Prices (crowd-sourced shelf prices) for UK supermarkets, fetched live for the English search words.
+const opLive = { term: '', state: '', list: [] };
+let ons = null; // UK typical prices from ONS, data/ons.json
+let onsState = '';
+
+const ukGroceryWanted = () => {
+  const s = state.search;
+  return s.cat === 'grocery' && s.regions.includes('UK') && !!s.q.trim();
+};
+const getJson = (url) => fetch(url).then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))));
+const refreshSearch = () => { if (route().name === 'search') refreshResults(); };
+
+function ensureUkPrices() {
+  if (!ukGroceryWanted()) return;
+  if (!onsState) {
+    onsState = 'loading';
+    getJson('data/ons.json')
+      .then((d) => { ons = d; onsState = 'ok'; })
+      .catch(() => { onsState = 'fail'; })
+      .finally(refreshSearch);
+  }
+  // Wait for the English words before asking Open Prices.
+  const text = trSource();
+  if (autoTr() && detectLang(text) !== 'en' && tr.text === text && tr.pending.has('en')) return;
+  const term = termFor('en');
+  if (!term || opLive.term === term) return;
+  Object.assign(opLive, { term, state: 'loading', list: [] });
+  loadOpenPrices(term);
+}
+
+async function loadOpenPrices(term) {
+  try {
+    const products = await getJson(openProductsUrl(term));
+    const codes = (products.items || []).map((p) => p.code).filter(Boolean);
+    const list = codes.length ? parseOpenPrices(await getJson(openPricesUrl(codes, 'GBP'))) : [];
+    if (opLive.term === term) Object.assign(opLive, { state: 'ok', list });
+  } catch {
+    if (opLive.term === term) opLive.state = 'fail';
+  }
+  refreshSearch();
+}
+
+// What every row needs, worked out once per render.
+function priceContext() {
+  const s = state.search;
+  const key = S.wordKey(searchItemName());
+  let hits;
+  return {
+    today: localDate(),
+    items: key ? S.liveItems().filter((i) => S.wordKey(i.name) === key) : [],
+    opwHits() {
+      if (hits) return hits;
+      hits = opw && s.q.trim() ? searchOpw(opw, s.q, 40) : [];
+      if (opw && !hits.length && s.q.trim()) hits = searchOpw(opw, termFor(detectLang(s.q) === 'zh' ? 'en' : 'zh'), 40);
+      return hits;
+    },
+  };
+}
+
+/** The price a data source has for this site today: an object, 'loading', or null. */
+function dataPrice(site, pc) {
+  const s = state.search;
+  if (s.cat !== 'grocery' || !s.q.trim()) return null;
+  const lang = getLang();
+  if (site.id === 'opw') {
+    // The Consumer Council row: the cheapest price at any of its stores.
+    let best = null;
+    for (const p of opw ? pc.opwHits() : []) {
+      const x = p.prices.reduce((a, b) => (b.price < a.price ? b : a), p.prices[0]);
+      if (x && (!best || x.price < best.x.price)) best = { p, x };
+    }
+    return best && { price: best.x.price, cur: 'HKD', name: `${productName(best.p, lang)} · ${storeName(best.x.store)}`, url: opwProductUrl(best.p.code), src: t('price.src.opw'), date: opw.date };
+  }
+  if (SITE_OPW[site.id]) {
+    if (!opw) return null;
+    const best = opwBest(pc.opwHits(), SITE_OPW[site.id]);
+    return best && { price: best.price, cur: 'HKD', name: productName(best.product, lang), url: opwProductUrl(best.product.code), src: t('price.src.opw'), date: opw.date };
+  }
+  if (SITE_MARKET[site.id]) {
+    const [m, store] = SITE_MARKET[site.id];
+    const x = mk[m];
+    if (!marketsWanted().includes(m)) return null;
+    const inFresh = x.fresh?.stores.some((st) => st.code === store);
+    const db = inFresh ? x.fresh : x.old;
+    if (!db) return (x.failed.fresh && (inFresh || x.failed.old)) ? null : 'loading';
+    const p = marketBest(db, termFor(MARKETS[m].lang), store);
+    const st = db.stores.find((y) => y.code === store);
+    return p && {
+      price: p.price, cur: 'EUR', name: p.name, url: p.url, src: MARKETS[m].source, date: inFresh ? db.date : st?.lastChange,
+      stale: !inFresh, storeStale: !inFresh, unit: p.pu && p.pu.per !== 'pc' ? `${fmt(p.pu.value, 'EUR', lang)}/${t('mkt.per.' + p.pu.per)}` : '',
+    };
+  }
+  if (SITE_BRAND[site.id] && ukGroceryWanted()) {
+    if (opLive.state === 'loading' || !opLive.state) return 'loading';
+    const best = openBest(opLive.list, SITE_BRAND[site.id], pc.today);
+    return best && {
+      price: best.price, cur: best.currency, name: best.name, src: 'Open Prices', date: best.date,
+      stale: ageDays(best.date) > 30, note: best.discounted ? t('price.offer') : '',
+    };
+  }
+  return null;
+}
+
+function sitePrice(site, pc) {
+  const lang = getLang();
+  const base = state.settings.base;
+  const approx = (v, cur) => {
+    const a = cur !== base ? convert(v, cur, base, ctx().rates) : NaN;
+    return Number.isFinite(a) ? `<span class="sp-meta">≈ ${esc(money(a))}</span>` : '';
+  };
+  const found = dataPrice(site, pc);
+  const mine = loggedBest(pc.items, site.name);
+  let html = '';
+  if (found === 'loading') {
+    html = `<div class="site-price none">${t('price.loading')}</div>`;
+  } else if (found) {
+    const name = found.url
+      ? `<a class="sp-name" href="${esc(safeUrl(found.url))}" target="_blank" rel="noopener noreferrer">${esc(found.name)}</a>`
+      : `<span class="sp-name">${esc(found.name)}</span>`;
+    // A store that stopped updating says since when; an old crowd-sourced price just shows its date.
+    const when = found.storeStale ? t('mkt.staleSince', { date: fmtDate(found.date) }) : fmtDate(found.date);
+    html = `<div class="site-price${found.stale ? ' stale' : ''}">
+      <span class="mini-tag">${esc(fmt(found.price, found.cur, lang))}</span>${approx(found.price, found.cur)}
+      ${name}
+      <span class="sp-meta">${esc([found.unit, found.note, found.src, when].filter(Boolean).join(' · '))}</span>
+      ${found.stale ? `<span class="stale-tag">${t('mkt.staleTitle')}</span>` : ''}
+    </div>`;
+  }
+  if (mine) {
+    const old = ageDays(mine.seen) > (state.settings.staleDays || 7);
+    html += `<div class="site-price mine${old ? ' stale' : ''}">
+      <span class="sp-meta">${t('price.mine')}</span>
+      <span class="mini-tag">${esc(fmt(Number(mine.price), mine.currency, lang))}</span>${approx(Number(mine.price), mine.currency)}
+      <span class="sp-meta">${esc(ageDays(mine.seen) <= 0 ? t('price.today') : t('price.ago', { n: ageDays(mine.seen) }))}</span>
+      ${old ? `<span class="stale-tag">${t('mkt.staleTitle')}</span>` : ''}
+    </div>`;
+  }
+  return html || `<div class="site-price none">${t('price.none')}</div>`;
+}
+
+// UK-wide typical price of the item (ONS), shown above the UK sites.
+function onsNote() {
+  if (!ukGroceryWanted() || !ons) return '';
+  const hits = onsMatch(ons, termFor('en'));
+  if (!hits.length) return '';
+  const nice = (d) => d.charAt(0) + d.slice(1).toLowerCase();
+  const list = hits.map((h) => `${esc(nice(h.desc))} <span class="mini-tag">${esc(fmt(h.price, 'GBP', getLang()))}</span>`).join(' · ');
+  return `<p class="region-note">${t('price.ons', { month: esc(ons.month || '') })} ${list}</p>`;
+}
+
+function siteRow(site, params, pc) {
   const { url, missing } = buildUrl(site.url, params);
   const href = safeUrl(url);
   // Without the search details, open the site's home page instead of a dead button.
@@ -534,6 +689,7 @@ function siteRow(site, params) {
       ${site.via === 'google' ? `<span class="badge">${t('site.viaGoogle')}</span>` : ''}
       ${site.check === 'bad' ? `<span class="badge warn-badge">${t('test.badBadge')}</span>` : ''}
     </div>
+    ${pc && !missing.length ? sitePrice(site, pc) : ''}
     <div class="site-actions">${open}<button type="button" class="btn small quiet" data-act="log-from-search" data-site="${esc(site.id)}">${t('search.log')}</button></div>
   </li>`;
 }

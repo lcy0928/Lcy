@@ -100,13 +100,15 @@ const fold = (s) => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,
  * Products whose name contains every word of the query (accents and punctuation ignored).
  * Up-to-date stores come back cheapest first — by price per kg/litre when sizes
  * are comparable, otherwise by price — and out-of-date stores separately.
+ * `store` limits the search to one store.
  */
-export function searchMarket(db, query, { limit = 8, staleLimit = 5 } = {}) {
+export function searchMarket(db, query, { limit = 8, staleLimit = 5, store = '' } = {}) {
   const words = fold(query).replace(/[^\p{L}\p{N}]+/gu, ' ').split(' ').filter((w) => w.length > 1);
   if (!db || !words.length) return { fresh: [], stale: [], rankedBy: '' };
   // Long words match inside compounds (Milch → Vollmilch); short ones only at a word start (Eis ≠ Reis).
   const tests = words.map((w) => (w.length >= 5 ? (t) => t.includes(w) : (t) => t.startsWith(w) || t.includes(` ${w}`)));
   const hits = db.items.filter((p) => {
+    if (store && p.store !== store) return false;
     const t = p.folded || (p.folded = ` ${fold(p.name).replace(/[^\p{L}\p{N}]+/gu, ' ')}`);
     return tests.every((f) => f(t));
   });

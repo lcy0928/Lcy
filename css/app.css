@@ -495,3 +495,12 @@ dialog::backdrop { background: rgb(13 20 26 / 0.45); }
 .word-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
 .word-src { font-weight: 600; overflow-wrap: anywhere; }
 .tr-hint { margin: 6px 0 0; }
+.site-price { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin: 6px 0 2px; font-size: 13px; }
+.site-price .mini-tag, .region-note .mini-tag { font-size: 13px; }
+.site-price.none { color: var(--ink-3); }
+.site-price.stale .mini-tag { background: var(--line); color: var(--ink-2); }
+.sp-name { font-weight: 600; overflow-wrap: anywhere; color: var(--ink); }
+a.sp-name { text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 2px; }
+.sp-meta { color: var(--ink-3); }
+.region-note { margin: -4px 0 10px; font-size: 13px; color: var(--ink-2); }
+.site > .site-price { flex-basis: 100%; order: 3; margin-top: 0; }
