@@ -1,7 +1,7 @@
 // Offline support. App files come from the network first (revalidated, so a new
 // version shows up on the next open) and fall back to the cached copy offline or
 // when the network is slow. Exchange-rate and GitHub API calls are not cached.
-const VERSION = 'pricebook-v6';
+const VERSION = 'pricebook-v7';
 const SHELL = [
   './',
   './index.html',
@@ -22,6 +22,7 @@ const SHELL = [
   './js/scan.js',
   './js/ocr.js',
   './js/translate.js',
+  './js/glossary.js',
   './js/market.js',
   './js/version.js',
   './icons/icon.svg',

@@ -78,3 +78,21 @@ test('bad token surfaces the HTTP status', async () => {
   const fetchImpl = async () => ({ ok: false, status: 401, json: async () => ({}) });
   await assert.rejects(syncGist('bad', null, {}, fetchImpl), (e) => e.status === 401);
 });
+
+test('translation fixes merge word by word across devices', () => {
+  const phone = { settings: { base: 'HKD', updatedAt: 200, myWords: {
+    '雞翼': { text: '雞翼', map: { en: 'wings' }, updatedAt: 200 },
+    '磨豆刷': { deleted: true, updatedAt: 150 },
+  } } };
+  const laptop = { settings: { base: 'GBP', updatedAt: 100, myWords: {
+    '雞翼': { text: '雞翼', map: { en: 'chicken wings' }, updatedAt: 50 },
+    '磨豆刷': { text: '磨豆刷', map: { en: 'grinder brush' }, updatedAt: 120 },
+    '叉電線': { text: '叉電線', map: { de: 'USB Kabel' }, updatedAt: 90 },
+  } } };
+  const m = mergeData(phone, laptop);
+  assert.equal(m.settings.base, 'HKD', 'other settings: newest wins');
+  assert.equal(m.settings.myWords['雞翼'].map.en, 'wings');
+  assert.equal(m.settings.myWords['磨豆刷'].deleted, true);
+  assert.equal(m.settings.myWords['叉電線'].map.de, 'USB Kabel');
+  assert.deepEqual(mergeData({}, {}).settings, undefined);
+});

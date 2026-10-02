@@ -92,6 +92,38 @@ export function setSetting(key, value) {
   save({ synced: true });
 }
 
+// ---- your translation fixes ----
+// myWords: { "雞翼": { text, map: { en: "chicken wings" }, updatedAt } }, synced per word.
+export const wordKey = (text) => String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+export function myWord(text, lang) {
+  const w = state.settings.myWords?.[wordKey(text)];
+  return w && !w.deleted ? w.map?.[lang] : undefined;
+}
+
+/** Remember (or with an empty value, forget) your translation of `text` into `lang`. */
+export function rememberWord(text, lang, value) {
+  const key = wordKey(text);
+  if (!key) return;
+  const words = { ...(state.settings.myWords || {}) };
+  const cur = words[key] && !words[key].deleted ? { ...words[key].map } : {};
+  if (value) cur[lang] = value;
+  else delete cur[lang];
+  words[key] = Object.keys(cur).length
+    ? { text: String(text).replace(/\s+/g, ' ').trim(), map: cur, updatedAt: Date.now() }
+    : { deleted: true, updatedAt: Date.now() };
+  setSetting('myWords', words);
+}
+
+export function forgetWord(key) {
+  if (!state.settings.myWords?.[key]) return;
+  setSetting('myWords', { ...state.settings.myWords, [key]: { deleted: true, updatedAt: Date.now() } });
+}
+
+export const liveWords = () => Object.entries(state.settings.myWords || {})
+  .filter(([, w]) => !w.deleted)
+  .sort((a, b) => b[1].updatedAt - a[1].updatedAt);
+
 // ---- sites ----
 export function getSites({ includeDisabled = false } = {}) {
   const out = DEFAULT_SITES.map((s) => {

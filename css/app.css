@@ -491,3 +491,7 @@ dialog::backdrop { background: rgb(13 20 26 / 0.45); }
   .price-tag, .preview-tag, .mini-tag { border: 2px solid CanvasText; -webkit-mask: none; mask: none; }
 }
 .version-row { align-items: center; justify-content: space-between; margin-top: 8px; }
+.word-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.word-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.word-src { font-weight: 600; overflow-wrap: anywhere; }
+.tr-hint { margin: 6px 0 0; }
