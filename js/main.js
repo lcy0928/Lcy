@@ -13,6 +13,7 @@ import { alertsFor } from './alerts.js';
 import { startScan, scanFile } from './scan.js';
 import { readPrices } from './ocr.js';
 import { expandOpw, searchOpw, opwQuotes, opwUpdates, productName, opwProductUrl, storeName } from './opw.js';
+import { MARKETS, STORE_COUNTRY, expandMarket, searchMarket, marketUpdates, productLink, storeName as marketStore } from './market.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -23,6 +24,9 @@ const dlg = $('#dlg');
 const ui = { testCat: 'all', listCat: 'all', showAll: false, sortUnit: false, siteCat: 'all', conv: { amt: '100', cur: 'GBP' }, chart: null, dialog: null };
 let installPrompt = null;
 let opw = null; // Consumer Council data, loaded from data/opw.json
+// European supermarket data per market: fresh = stores still updating (data/nl.json),
+// old = stores whose prices stopped changing (data/nl-old.json). Loaded on first use.
+const mk = Object.fromEntries(Object.keys(MARKETS).map((m) => [m, { fresh: null, old: null, failed: {}, loads: {}, started: false }]));
 
 const ctx = () => ({
   base: state.settings.base,
@@ -202,7 +206,7 @@ function sitesShown() {
 // Languages the visible sites search in (hotel sites all take English city names).
 function langsNeeded() {
   if (state.search.cat === 'hotel') return ['en'];
-  return [...new Set(sitesShown().map(siteLang))];
+  return [...new Set([...sitesShown().map(siteLang), ...marketsWanted().map((m) => MARKETS[m].lang)])];
 }
 
 /** The keyword (or city) to use in `lang`: your own edit, else the translation, else as typed. */
@@ -302,8 +306,10 @@ function searchResults() {
   const params = searchParams();
   const sites = sitesShown();
   if (!sites.length) return `<p class="empty">${t('search.empty')}</p>`;
+  // The best price-comparison site for this category first, then other comparison sites, then shops.
+  const order = (x) => (x.top?.includes(s.cat) ? 0 : x.kind === 'compare' ? 1 : 2);
   const groups = REGIONS.filter((r) => s.regions.includes(r))
-    .map((r) => [r, sites.filter((x) => x.region === r)])
+    .map((r) => [r, sites.filter((x) => x.region === r).sort((a, b) => order(a) - order(b))])
     .filter(([, l]) => l.length);
   const missing = [...new Set(sites.flatMap((x) => buildUrl(x.url, params).missing))];
   const need = [...new Set(missing.map((k) => t(MISSING_LABEL[k] || k)))].join('、');
@@ -311,7 +317,7 @@ function searchResults() {
     ? `<div class="need-banner" role="status"><p>${t('search.needBanner', { fields: esc(need) })}</p>
         <button type="button" class="btn small primary" data-act="focus-search">${t('search.fillIn')}</button></div>`
     : `<p class="hint">${t('search.hint')}</p>`;
-  return `${opwPanel()}${banner}${groups.map(([r, list]) => `
+  return `${opwPanel()}${marketPanels()}${banner}${groups.map(([r, list]) => `
     <section class="region">
       <h2 class="region-h"><span>${t('region.' + r)}</span><small>${t('search.count', { n: list.length })}</small></h2>
       <ul class="sites">${list.map((site) => siteRow(site, paramsFor(site))).join('')}</ul>
@@ -376,6 +382,135 @@ async function loadOpw() {
   }
 }
 
+// ---- European supermarkets ----
+function marketsWanted() {
+  const s = state.search;
+  return s.cat === 'grocery' && s.regions.includes('EU') && s.q.trim() ? Object.keys(MARKETS) : [];
+}
+
+function loadMarket(m, part) {
+  const x = mk[m];
+  x.loads[part] ||= fetch(`data/${m}${part === 'old' ? '-old' : ''}.json`, { cache: 'no-cache' })
+    .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+    .then((data) => {
+      x[part] = expandMarket(data);
+      if (!x[part]) throw new Error('bad file');
+    })
+    .catch(() => { x.failed[part] = true; });
+  return x.loads[part];
+}
+
+// Show search results as each file arrives: up-to-date stores first, the rest after.
+function ensureMarkets() {
+  for (const m of marketsWanted()) {
+    if (mk[m].started) continue;
+    mk[m].started = true;
+    loadMarket(m, 'fresh')
+      .then(() => { applyMarketUpdates(m); refreshMarkets(); return loadMarket(m, 'old'); })
+      .then(refreshMarkets);
+  }
+}
+
+function refreshMarkets() {
+  if (route().name === 'search' && marketsWanted().length) refreshResults();
+  else if (['item', 'list'].includes(route().name)) softRender();
+}
+
+// Keep logged supermarket prices in step with today's file.
+function applyMarketUpdates(m) {
+  const db = mk[m].fresh;
+  if (!db) return;
+  const rates = ctx().rates;
+  for (const item of S.liveItems()) {
+    if (!item.quotes?.some((q) => !q.deleted && q.feed?.m === m)) continue;
+    const { add, seen } = marketUpdates(item, db, m);
+    if (!add.length && !seen.length) continue;
+    for (const q of add) q.fx = fxSnapshot(q, rates, state.rates?.date || db.date);
+    S.applyQuoteUpdates(item.id, add, seen, db.date);
+  }
+}
+
+// At start-up, refresh tracked supermarket prices (only the markets that have any).
+function loadTrackedMarkets() {
+  const used = new Set();
+  for (const item of S.liveItems()) for (const q of item.quotes || []) if (!q.deleted && q.feed?.m in mk) used.add(q.feed.m);
+  for (const m of used) loadMarket(m, 'fresh').then(() => { applyMarketUpdates(m); if (route().name !== 'search') softRender(); });
+}
+
+const sizeLabel = (p) => {
+  if (!(p.qty > 0)) return '';
+  const lang = getLang();
+  const n = (v) => new Intl.NumberFormat(locale(), { maximumFractionDigits: 2 }).format(v);
+  if (p.unit === 'ml') return p.qty >= 1000 ? `${n(p.qty / 1000)} L` : `${n(p.qty)} ml`;
+  if (p.unit === 'g') return p.qty >= 1000 ? `${n(p.qty / 1000)} kg` : `${n(p.qty)} g`;
+  return lang === 'zh' ? `${n(p.qty)} 件` : `${n(p.qty)} pcs`;
+};
+
+function marketRow(m, part, p, store) {
+  const base = state.settings.base;
+  const approx = base !== 'EUR' ? convert(p.price, 'EUR', base, ctx().rates) : NaN;
+  const size = sizeLabel(p);
+  const pu = p.pu && (p.pu.per !== 'pc' || p.qty > 1) ? `${fmt(p.pu.value, 'EUR', getLang())}/${t('mkt.per.' + p.pu.per)}` : '';
+  const meta = [marketStore(p.store), size, pu].filter(Boolean).map(esc).join(' · ');
+  const old = part === 'old' ? `<span class="stale-tag">${esc(t('mkt.staleSince', { date: fmtDate(store?.lastChange) }))}</span>` : '';
+  return `<li class="opw-item mkt-item${part === 'old' ? ' stale' : ''}">
+    <div class="opw-head">
+      <div><div class="opw-name">${esc(p.name)}</div><div class="meta">${meta}</div>${old}</div>
+      <div class="opw-best"><span class="mini-tag">${esc(fmt(p.price, 'EUR', getLang()))}</span>${Number.isFinite(approx) ? `<span class="meta">≈ ${esc(money(approx))}</span>` : ''}</div>
+    </div>
+    <div class="opw-actions">
+      <button type="button" class="btn small" data-act="mkt-log" data-m="${m}" data-part="${part}" data-i="${p.i}">${t('search.log')}</button>
+      <a class="btn small quiet" href="${esc(safeUrl(productLink(p)))}" target="_blank" rel="noopener noreferrer">${t(p.url ? 'mkt.page' : 'mkt.find')} ↗</a>
+    </div>
+  </li>`;
+}
+
+function marketPanels() {
+  const ms = marketsWanted();
+  if (!ms.length) return '';
+  ensureMarkets();
+  return ms.map(marketPanel).join('');
+}
+
+function marketPanel(m) {
+  const x = mk[m];
+  const info = MARKETS[m];
+  const head = (extra = '') => `<h2 class="section-h">${t('mkt.title.' + m)}${extra}</h2>`;
+  if (!x.fresh) {
+    if (x.failed.fresh) return '';
+    return `<section class="card opw mkt">${head()}<p class="muted small">${t('mkt.loading')}</p></section>`;
+  }
+  const q = termFor(info.lang);
+  const r = searchMarket(x.fresh, q, { limit: 5, staleLimit: 0 });
+  const unitNote = r.rankedBy ? t('mkt.rank.' + r.rankedBy) : t('mkt.rank.price');
+  const zh = getLang() === 'zh';
+  const stores = x.fresh.stores.map((s) => marketStore(s.code)).join(zh ? '、' : ', ');
+  const byCode = (db) => Object.fromEntries(db.stores.map((s) => [s.code, s]));
+  const fresh = r.fresh.map((p) => marketRow(m, 'fresh', p)).join('');
+
+  let stale = '';
+  if (x.old) {
+    const o = searchMarket(x.old, q, { limit: 0, staleLimit: 3 });
+    const sc = byCode(x.old);
+    const list = x.old.stores.map((s) => (zh ? `${marketStore(s.code)}（${fmtDate(s.lastChange)}）` : `${marketStore(s.code)} (${fmtDate(s.lastChange)})`)).join(zh ? '、' : ', ');
+    stale = `<div class="mkt-stale">
+      <h3 class="mkt-stale-h">⚠ ${t('mkt.staleTitle')}</h3>
+      <p class="muted small">${esc(t('mkt.staleNote', { stores: list }))}</p>
+      ${o.stale.length ? `<ul class="opw-list">${o.stale.map((p) => marketRow(m, 'old', p, sc[p.store])).join('')}</ul>` : ''}
+    </div>`;
+  } else if (!x.failed.old) {
+    stale = `<p class="muted small">${t('mkt.loadingOld')}</p>`;
+  }
+
+  return `<section class="card opw mkt">
+    ${head(` <small>${esc(t('opw.updated', { date: fmtDate(x.fresh.date) }))}</small>`)}
+    <p class="muted small">${esc(t('mkt.lead', { q, stores }))} ${esc(unitNote)}</p>
+    ${fresh ? `<ol class="opw-list">${fresh}</ol>` : `<p class="muted small">${esc(t('mkt.none', { q }))}</p>`}
+    ${stale}
+    <p class="muted small">${t('mkt.note', { src: `<a href="${esc(info.sourceUrl)}" target="_blank" rel="noopener noreferrer">${esc(info.source)}</a>` })}</p>
+  </section>`;
+}
+
 function siteRow(site, params) {
   const { url, missing } = buildUrl(site.url, params);
   const href = safeUrl(url);
@@ -390,6 +525,7 @@ function siteRow(site, params) {
     <div class="site-main">
       <span class="site-name">${esc(site.name)}</span>
       <span class="badge kind-${esc(site.kind)}">${t('kind.' + site.kind)}</span>
+      ${site.top?.includes(state.search.cat) ? `<span class="badge top-badge">${t('site.top')}</span>` : ''}
       ${site.via === 'google' ? `<span class="badge">${t('site.viaGoogle')}</span>` : ''}
       ${site.check === 'bad' ? `<span class="badge warn-badge">${t('test.badBadge')}</span>` : ''}
     </div>
@@ -1020,10 +1156,10 @@ function updateQuotePreview(form) {
     ${breakdown(r, false)}`;
 }
 
-function openQuote({ itemId = '', quote = null, preset = {}, scratch = false, itemName = '', refresh = false }) {
+function openQuote({ itemId = '', quote = null, preset = {}, scratch = false, itemName = '', refresh = false, feed = null }) {
   const q = quote ? { ...defaultQuote(), ...quote } : defaultQuote(preset);
   openDialog(quoteFormHtml(q, { needName: !itemId && !scratch, itemName, editing: !!quote, refresh }),
-    { kind: 'quote', itemId, scratch, quoteId: quote?.id || '', cat: preset.cat || '' });
+    { kind: 'quote', itemId, scratch, quoteId: quote?.id || '', cat: preset.cat || '', feed });
   const form = $('form', dlg);
   updateQuotePreview(form);
   if (refresh) { form.elements.price.focus(); form.elements.price.select(); }
@@ -1107,6 +1243,8 @@ function saveQuote(form) {
   const ratesDate = state.rates?.date || localDate();
   q.fx = sameFx ? prev.fx : fxSnapshot(q, ctx().rates, ratesDate);
   q.id = d.quoteId || uid();
+  // Logged from the supermarket panel: keep following that product's price every day.
+  if (d.feed && !d.quoteId) q.feed = d.feed;
   S.upsertQuote(itemId, q);
   // Back-dated price: swap in that day's exchange rate when we can get it.
   if (!sameFx && q.fx && q.date < ratesDate && !Object.keys(state.settings.manualRates || {}).some((c) => q.fx.hkdPer[c])) {
@@ -1328,6 +1466,21 @@ const actions = {
     const { url, missing } = buildUrl(site.url, paramsFor(site));
     if (!missing.length) preset.url = url;
     openQuote({ preset, itemName: searchItemName() });
+  },
+  'mkt-log'(el) {
+    const m = el.dataset.m;
+    const db = mk[m]?.[el.dataset.part];
+    const p = db?.items[Number(el.dataset.i)];
+    if (!p) return;
+    const store = db.stores.find((s) => s.code === p.store);
+    const preset = {
+      site: marketStore(p.store), region: 'EU', country: STORE_COUNTRY[p.store] || MARKETS[m].country,
+      currency: 'EUR', price: p.price, mode: 'local', removeVat: false, cat: 'grocery',
+      url: productLink(p), date: p.fresh ? db.date : store?.lastChange || db.date,
+      qty: p.qty || '', unit: p.unit === 'pc' ? 'pcs' : p.unit || 'g',
+      note: p.fresh ? '' : t('mkt.staleSince', { date: store?.lastChange || '' }),
+    };
+    openQuote({ preset, itemName: searchItemName(), feed: { m, store: p.store, name: p.name } });
   },
   'opw-track'(el) {
     const p = opw?.byCode.get(el.dataset.code);
@@ -1715,7 +1868,7 @@ if (route().name === 'search') scheduleTranslation(0);
 })();
 if (!state.rates || Date.now() - (state.rates.fetchedAt || 0) > 6 * 3600_000) refreshRates({ quiet: true });
 lastAutoSync = Date.now();
-doSync({ quiet: true }).then(loadOpw);
+doSync({ quiet: true }).then(() => { loadOpw(); loadTrackedMarkets(); });
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   // When a new version takes over, reload once so the app never runs stale code.
