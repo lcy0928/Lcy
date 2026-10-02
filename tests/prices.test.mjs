@@ -87,6 +87,10 @@ test('ONS build: CSV parsing and median of valid quotes', () => {
   for (const p of [1, 2]) rows.push(`202608,2,RARE ITEM,4,1,${p}`); // too few quotes
   assert.deepEqual(aggregateQuotes(rows.join('\n')), [['ORANGE JUICE 1 LITRE', 1.7, 5]]);
   assert.throws(() => aggregateQuotes('a,b\n1,2'), /unexpected columns/);
+  // Since the 2025 update the description column is cs_desc.
+  const now = ['quote_date,cs_id,cs_desc,validity,shop_code,price'];
+  for (const p of [1, 2, 3, 4, 5]) now.push(`202608,9,Orange juice 1 litre,4,1,${p}`);
+  assert.deepEqual(aggregateQuotes(now.join('\n')), [['Orange juice 1 litre', 3, 5]]);
   assert.equal(editionMonth('/economy/x/pricequotesjune2026'), '2026-06');
   assert.equal(editionMonth('upload-pricequotes202608.csv'), '2026-08');
   assert.equal(editionMonth('/economy/x/itemindices'), '');
