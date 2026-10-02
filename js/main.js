@@ -13,6 +13,7 @@ import { alertsFor } from './alerts.js';
 import { startScan, scanFile } from './scan.js';
 import { readPrices } from './ocr.js';
 import { expandOpw, searchOpw, opwQuotes, opwUpdates, productName, opwProductUrl, storeName } from './opw.js';
+import { APP_VERSION } from './version.js';
 import { MARKETS, STORE_COUNTRY, expandMarket, searchMarket, marketUpdates, productLink, storeName as marketStore } from './market.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -951,6 +952,10 @@ function viewSettings() {
   <section class="card about">
     <h2 class="section-h">${t('set.about')}</h2>
     <p class="muted small">${t('set.aboutText')}</p>
+    <div class="actions version-row">
+      <span class="muted small">${esc(t('set.version', { v: APP_VERSION.replace('pricebook-', '') }))}</span>
+      <button type="button" class="btn small" data-act="force-update">${t('set.forceUpdate')}</button>
+    </div>
   </section>`;
 }
 
@@ -1466,6 +1471,16 @@ const actions = {
     const { url, missing } = buildUrl(site.url, paramsFor(site));
     if (!missing.length) preset.url = url;
     openQuote({ preset, itemName: searchItemName() });
+  },
+  // Clear every cached file and load the newest version from the server.
+  async 'force-update'() {
+    toast(t('set.updating'));
+    try {
+      const reg = await navigator.serviceWorker?.getRegistration();
+      await reg?.update();
+      if (window.caches) await Promise.all((await caches.keys()).map((k) => caches.delete(k)));
+    } catch { /* reload anyway */ }
+    location.reload();
   },
   'mkt-log'(el) {
     const m = el.dataset.m;

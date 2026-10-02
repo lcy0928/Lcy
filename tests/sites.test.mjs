@@ -97,3 +97,17 @@ test('the all-supermarket comparison sites are marked to come first', () => {
   assert.deepEqual(top, ['opw', 'trolley']);
   for (const s of DEFAULT_SITES) if (s.top) assert.ok(s.top.every((c) => s.cats.includes(c)), s.id);
 });
+
+test('Trolley opens its own search page', async () => {
+  const t = DEFAULT_SITES.find((s) => s.id === 'trolley');
+  assert.equal(buildUrl(t.url, { q: 'orange juice' }).url, 'https://www.trolley.co.uk/search/?q=orange%20juice');
+  assert.equal(t.via, undefined);
+});
+
+test('Settings version matches the service worker cache version', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { APP_VERSION } = await import('../js/version.js');
+  const sw = await readFile(new URL('../sw.js', import.meta.url), 'utf8');
+  assert.equal(sw.match(/const VERSION = '([^']+)'/)[1], APP_VERSION);
+  assert.ok(sw.includes("'./js/version.js'"));
+});
