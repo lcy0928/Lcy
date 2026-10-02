@@ -5,7 +5,7 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
-  # Daily refresh of the Consumer Council supermarket prices (10:23 Hong Kong time).
+  # Daily refresh of the supermarket prices (Consumer Council, Netherlands, Austria) at 10:23 Hong Kong time.
   # GitHub pauses schedules after 60 days without repository activity; re-enable under Actions if so.
   schedule:
     - cron: '23 2 * * *'
@@ -50,6 +50,20 @@ jobs:
         # A failed download must not block the deploy; the app hides the panel without data.
         continue-on-error: true
         run: node scripts/opw-build.mjs _site/data/opw.json
+      - name: Fetch Dutch supermarket prices (checkjebon.nl)
+        # Trees only: the build reads a few older snapshots to see which stores stopped updating.
+        continue-on-error: true
+        run: |
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/supermarkt/checkjebon.git "$RUNNER_TEMP/checkjebon"
+          mkdir -p _site/data
+          node --max-old-space-size=4096 scripts/market-build.mjs nl _site/data/nl.json "$RUNNER_TEMP/checkjebon"
+      - name: Fetch Austrian supermarket prices (Heisse Preise)
+        continue-on-error: true
+        run: |
+          curl -sSfL --retry 3 -o "$RUNNER_TEMP/hp.tar.gz" https://github.com/falknerdominik/heisse-preise-data/releases/latest/download/latest-canonical.tar.gz
+          tar -xzf "$RUNNER_TEMP/hp.tar.gz" -C "$RUNNER_TEMP" latest-canonical.json
+          mkdir -p _site/data
+          node --max-old-space-size=4096 scripts/market-build.mjs at _site/data/at.json "$RUNNER_TEMP/latest-canonical.json"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

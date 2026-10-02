@@ -62,3 +62,14 @@ test('decodeEntities and sampleTerm', () => {
   assert.equal(sampleTerm('磨豆機', 'de'), 'Kaffeemühle');
   assert.equal(sampleTerm('牛奶', 'nl'), 'melk');
 });
+
+test('supermarket words: orange juice in every language', () => {
+  assert.equal(glossaryTranslate('橙汁', 'zh', 'en'), 'orange juice');
+  assert.equal(glossaryTranslate('橙汁', 'zh', 'nl'), 'sinaasappelsap');
+  assert.equal(glossaryTranslate('橙汁', 'zh', 'de'), 'Orangensaft');
+  assert.equal(glossaryTranslate('orange juice', 'en', 'de'), 'Orangensaft');
+  assert.equal(glossaryTranslate('orange juice', 'en', 'zh'), '橙汁');
+  assert.equal(glossaryTranslate('Tropicana 橙汁', 'zh', 'nl'), 'Tropicana sinaasappelsap');
+  // "Apple" the brand is not turned into fruit.
+  assert.equal(glossaryTranslate('蘋果手機', 'zh', 'en'), null);
+});

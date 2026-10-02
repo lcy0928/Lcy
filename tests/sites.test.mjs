@@ -91,3 +91,9 @@ test('every site has a supported search language', () => {
   assert.equal(siteLang(DEFAULT_SITES.find((s) => s.id === 'leboncoin')), 'fr');
   assert.equal(siteLang(DEFAULT_SITES.find((s) => s.id === 'ah')), 'nl');
 });
+
+test('the all-supermarket comparison sites are marked to come first', () => {
+  const top = DEFAULT_SITES.filter((s) => s.top?.includes('grocery')).map((s) => s.id).sort();
+  assert.deepEqual(top, ['opw', 'trolley']);
+  for (const s of DEFAULT_SITES) if (s.top) assert.ok(s.top.every((c) => s.cats.includes(c)), s.id);
+});
