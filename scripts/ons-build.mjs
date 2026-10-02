@@ -53,7 +53,9 @@ export function aggregateQuotes(csvText, { minQuotes = 5 } = {}) {
   const rows = parseCsv(csvText);
   const head = rows.shift().map((h) => h.trim().toLowerCase());
   const col = (name) => head.indexOf(name);
-  const [iDesc, iPrice, iValid] = [col('item_desc'), col('price'), col('validity')];
+  // Item description: item_desc until 2025, cs_desc (consumption segment) since the 2025 update.
+  const iDesc = col('item_desc') >= 0 ? col('item_desc') : col('cs_desc');
+  const [iPrice, iValid] = [col('price'), col('validity')];
   if (iDesc < 0 || iPrice < 0) throw new Error(`unexpected columns: ${head.join(',')}`);
   const by = new Map();
   for (const r of rows) {
