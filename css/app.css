@@ -208,7 +208,7 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--accent);
 /* ---------- search ---------- */
 .search-form { display: flex; flex-direction: column; gap: 14px; }
 .filter-row { display: flex; flex-direction: column; gap: 6px; }
-.form-foot { display: flex; justify-content: flex-end; border-top: 1px solid var(--line); padding-top: 12px; }
+.form-foot { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 12px; }
 
 .region { margin-top: 20px; }
 .region-h {
@@ -259,6 +259,8 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--accent);
 .tag-notes { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 14px; color: var(--ink-2); margin: 14px 0 0; }
 
 .preview { margin-top: 14px; }
+.paste-row { display: flex; gap: 8px; }
+.paste-row input { flex: 1; min-width: 0; font-size: 15px; }
 .preview-tag { padding: 10px 20px 10px 44px; border-radius: 6px 12px 12px 6px; margin-bottom: 10px; }
 .preview-tag .tag-sym { font-size: 18px; }
 .preview-tag .tag-num { font-size: 40px; }

@@ -62,7 +62,10 @@ const zh = {
   'item.aboveTarget': '仲差 {amt} 先到目標價',
   'item.cheaperBy': '比第二平平 {amt}',
 
-  'quote.title': '記錄價錢', 'quote.editTitle': '編輯價錢',
+  'quote.title': '記錄價錢', 'quote.editTitle': '編輯價錢', 'quote.refreshTitle': '更新價錢',
+  'quote.refresh': '更新價', 'quote.urlPh': '貼上商品連結（可選）', 'quote.paste': '貼上',
+  'search.pasteLog': '貼上連結記價',
+  'paste.none': '剪貼簿入面冇連結，可以將連結貼入最頂嗰格', 'paste.detected': '已認出：{site}',
   'quote.item': '項目', 'quote.site': '網站 / 店舖', 'quote.region': '地區', 'quote.cond': '新舊',
   'quote.price': '標價', 'quote.currency': '貨幣', 'quote.shipping': '運費',
   'quote.fees': '其他費用', 'quote.feesHint': '例如行李、酒店稅、服務費',
@@ -225,7 +228,10 @@ const en = {
   'item.aboveTarget': '{amt} above your target',
   'item.cheaperBy': '{amt} cheaper than the next best',
 
-  'quote.title': 'Log a price', 'quote.editTitle': 'Edit price',
+  'quote.title': 'Log a price', 'quote.editTitle': 'Edit price', 'quote.refreshTitle': 'Update price',
+  'quote.refresh': 'Update', 'quote.urlPh': 'Paste a product link (optional)', 'quote.paste': 'Paste',
+  'search.pasteLog': 'Log from a link',
+  'paste.none': 'No link on the clipboard — paste it into the top box', 'paste.detected': 'Recognised: {site}',
   'quote.item': 'Item', 'quote.site': 'Site or store', 'quote.region': 'Region', 'quote.cond': 'Condition',
   'quote.price': 'Listed price', 'quote.currency': 'Currency', 'quote.shipping': 'Shipping',
   'quote.fees': 'Other fees', 'quote.feesHint': 'e.g. baggage, city tax, service fees',

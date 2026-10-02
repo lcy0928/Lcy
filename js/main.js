@@ -7,6 +7,7 @@ import { landed, latestPerSite, rankQuotes, COUNTRIES, REGION_COUNTRY, MODES } f
 import { syncGist, mergeData } from './sync.js';
 import { buildChart, bindChart } from './chart.js';
 import { esc, num, uid, localDate, addDays, safeUrl } from './util.js';
+import { detectFromUrl, extractUrl, nameFromUrl } from './detect.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -156,7 +157,10 @@ function viewSearch() {
       <div class="chips small">${REGIONS.map((r) => chip('region', r, t('region.' + r), s.regions.includes(r), 'checkbox')).join('')}</div></div>
     ${hasUsed(s.cat) ? `<div class="filter-row"><span class="field-label">${t('search.cond')}</span>
       <div class="chips small" role="radiogroup">${['all', 'new', 'used'].map((c) => chip('cond', c, t('cond.' + c), s.cond === c)).join('')}</div></div>` : ''}
-    <div class="form-foot"><button type="button" class="btn" data-act="track">${t('search.track')}</button></div>
+    <div class="form-foot">
+      <button type="button" class="btn quiet" data-act="paste-log">${t('search.pasteLog')}</button>
+      <button type="button" class="btn" data-act="track">${t('search.track')}</button>
+    </div>
   </form>
   <div id="results" aria-live="polite">${searchResults()}</div>`;
 }
@@ -302,6 +306,7 @@ function quoteRow({ q, r }, i, { scratch = false, itemId = '', cheapest = NaN } 
     <div class="q-total">${esc(money(r.total))}${i === 0 && scratch ? `<span class="q-best">${t('calc.cheapest')}</span>` : ''}${diff}</div>
     <div class="q-actions">
       ${href ? `<a class="btn small quiet" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${t('item.visit')} ↗</a>` : ''}
+      ${scratch ? '' : `<button type="button" class="btn small" data-act="quote-refresh" ${ids}>${t('quote.refresh')}</button>`}
       <button type="button" class="btn small quiet" data-act="quote-edit" ${ids}>${t('edit')}</button>
       <button type="button" class="btn small quiet danger" data-act="quote-delete" ${ids}>${t('delete')}</button>
     </div>
@@ -536,15 +541,19 @@ function defaultQuote(preset = {}) {
   };
 }
 
-function quoteFormHtml(q, { needName, itemName, editing }) {
+function quoteFormHtml(q, { needName, itemName, editing, refresh }) {
   const names = S.liveItems().map((i) => `<option value="${esc(i.name)}">`).join('');
   const siteNames = [...new Set(S.getSites({ includeDisabled: true }).map((s) => s.name))].map((n) => `<option value="${esc(n)}">`).join('');
   const countries = Object.keys(COUNTRIES).map((k) => opt(k, k === 'OTHER' ? '—' : k, k === q.country)).join('');
   const numIn = (name, val, extra = '') => `<input type="number" name="${name}" step="any" inputmode="decimal" value="${esc(val)}" ${extra}>`;
   return `<form method="dialog" class="dlg-form quote-form" data-form="quote" data-mode="${esc(q.mode)}" novalidate>
-    <header class="dlg-head"><h2>${editing ? t('quote.editTitle') : t('quote.title')}</h2>
+    <header class="dlg-head"><h2>${editing ? t('quote.editTitle') : refresh ? t('quote.refreshTitle') : t('quote.title')}</h2>
       <button type="button" class="icon-btn" data-act="dlg-close" aria-label="${esc(t('close'))}">✕</button></header>
     <div class="dlg-body">
+      <div class="paste-row">
+        <input type="url" name="url" value="${esc(q.url)}" placeholder="${esc(t('quote.urlPh'))}" autocomplete="off" aria-label="${esc(t('quote.url'))}">
+        <button type="button" class="btn small" data-act="paste-link">${t('quote.paste')}</button>
+      </div>
       ${needName ? field(t('quote.item'), `<input name="itemName" list="dl-items" value="${esc(itemName)}" required autocomplete="off"><datalist id="dl-items">${names}</datalist>`) : ''}
       <div class="grid-2">
         ${field(t('quote.site'), `<input name="site" list="dl-sites" value="${esc(q.site)}" autocomplete="off"><datalist id="dl-sites">${siteNames}</datalist>`)}
@@ -567,7 +576,7 @@ function quoteFormHtml(q, { needName, itemName, editing }) {
         ${field(t('quote.shipping'), numIn('shipping', q.shipping, 'min="0"'))}
         ${field(t('quote.fees'), numIn('fees', q.fees, `min="0" placeholder="${esc(t('quote.feesHint'))}"`))}
       </div>
-      <details class="more"${editing && (q.fwd || q.dutyPct || q.cardFeePct !== '' || q.url || q.note) ? ' open' : ''}>
+      <details class="more"${editing && (q.fwd || q.dutyPct || q.cardFeePct !== '' || q.note) ? ' open' : ''}>
         <summary>${t('quote.more')}</summary>
         <div class="grid-2">
           ${field(t('quote.fwd'), numIn('fwd', q.fwd, 'min="0"'))}
@@ -575,7 +584,6 @@ function quoteFormHtml(q, { needName, itemName, editing }) {
           <div class="only-online">${field(`${t('quote.duty')} <span class="muted">· ${t('quote.dutyHint')}</span>`, numIn('dutyPct', q.dutyPct, 'min="0" placeholder="0"'))}</div>
           ${field(t('quote.cardFee'), numIn('cardFeePct', q.cardFeePct, `min="0" placeholder="${esc(t('quote.cardFeeAuto', { pct: state.settings.cardFeePct }))}"`))}
           ${field(t('quote.date'), `<input type="date" name="date" value="${esc(q.date)}">`)}
-          ${field(t('quote.url'), `<input type="url" name="url" value="${esc(q.url)}" placeholder="https://" autocomplete="off">`)}
         </div>
         ${field(t('quote.note'), `<input name="note" value="${esc(q.note)}" autocomplete="off">`)}
       </details>
@@ -626,11 +634,51 @@ function updateQuotePreview(form) {
     ${breakdown(r, false)}`;
 }
 
-function openQuote({ itemId = '', quote = null, preset = {}, scratch = false, itemName = '' }) {
+function openQuote({ itemId = '', quote = null, preset = {}, scratch = false, itemName = '', refresh = false }) {
   const q = quote ? { ...defaultQuote(), ...quote } : defaultQuote(preset);
-  openDialog(quoteFormHtml(q, { needName: !itemId && !scratch, itemName, editing: !!quote }),
+  openDialog(quoteFormHtml(q, { needName: !itemId && !scratch, itemName, editing: !!quote, refresh }),
     { kind: 'quote', itemId, scratch, quoteId: quote?.id || '', cat: preset.cat || '' });
-  updateQuotePreview($('form', dlg));
+  const form = $('form', dlg);
+  updateQuotePreview(form);
+  if (refresh) { form.elements.price.focus(); form.elements.price.select(); }
+}
+
+// Fill the quote form from a recognised link. Only empty fields are filled
+// unless `force` is set (an explicit paste).
+function applyDetection(form, det, force = false) {
+  const f = form.elements;
+  if (!det) return;
+  f.url.value = det.url;
+  if (force || !f.site.value.trim()) {
+    f.site.value = det.name;
+    f.region.value = det.region;
+    f.currency.value = det.currency;
+    f.cond.value = det.cond;
+    f.country.value = REGION_COUNTRY[det.region];
+    f.country.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  if (f.itemName && !f.itemName.value.trim()) f.itemName.value = nameFromUrl(det.url);
+  toast(t('paste.detected', { site: det.name }));
+  updateQuotePreview(form);
+}
+
+async function readClipboardUrl() {
+  try {
+    return extractUrl(await navigator.clipboard.readText());
+  } catch {
+    return '';
+  }
+}
+
+// Open the quote dialog for a link (from the clipboard, a share, or a paste).
+function openQuoteFromUrl(url) {
+  const det = detectFromUrl(url, S.getSites({ includeDisabled: true }));
+  if (!det) return openQuote({ preset: { cat: state.search.cat } });
+  openQuote({
+    preset: { site: det.name, region: det.region, currency: det.currency, cond: det.cond, url, cat: state.search.cat },
+    itemName: nameFromUrl(url),
+  });
+  toast(t('paste.detected', { site: det.name }));
 }
 
 function saveQuote(form) {
@@ -853,6 +901,28 @@ const actions = {
     const item = S.getItem(el.dataset.item);
     openQuote({ itemId: item.id, preset: { cat: item.cat } });
   },
+  'quote-refresh'(el) {
+    const { id, item } = el.dataset;
+    const q = S.getItem(item)?.quotes.find((x) => x.id === id);
+    if (!q) return;
+    const { id: _id, createdAt, updatedAt, date, fx, deleted, ...copy } = q;
+    openQuote({ itemId: item, preset: { ...copy, date: localDate() }, refresh: true });
+  },
+  async 'paste-link'() {
+    const form = $('form', dlg);
+    const url = await readClipboardUrl();
+    if (!url) { toast(t('paste.none'), 'bad'); form.elements.url.focus(); return; }
+    applyDetection(form, detectFromUrl(url, S.getSites({ includeDisabled: true })), true);
+  },
+  async 'paste-log'() {
+    const url = await readClipboardUrl();
+    if (url) openQuoteFromUrl(url);
+    else {
+      openQuote({ preset: { cat: state.search.cat }, itemName: searchItemName() });
+      toast(t('paste.none'));
+      $('form', dlg).elements.url.focus();
+    }
+  },
   'quote-edit'(el) {
     const { id, item, scratch } = el.dataset;
     const q = scratch ? state.scratch.find((x) => x.id === id) : S.getItem(item)?.quotes.find((x) => x.id === id);
@@ -995,6 +1065,10 @@ document.addEventListener('change', async (e) => {
         form.elements.country.dispatchEvent(new Event('change', { bubbles: true }));
       }
     }
+    if (el.name === 'url') {
+      const url = extractUrl(el.value);
+      if (url) applyDetection(form, detectFromUrl(url, S.getSites({ includeDisabled: true })));
+    }
     if (el.name === 'mode' && el.value === 'online') {
       const r = form.elements.region.value;
       form.elements.removeVat.checked = r === 'UK' || r === 'EU';
@@ -1072,6 +1146,15 @@ window.addEventListener('beforeinstallprompt', (e) => {
 // ---------- boot ----------
 setLang(state.settings.lang);
 render();
+
+// Android "Share to PriceBook" (Web Share Target) arrives as ?url=&text=&title=
+(() => {
+  const p = new URLSearchParams(location.search);
+  if (!p.has('url') && !p.has('text') && !p.has('title')) return;
+  const url = extractUrl(p.get('url')) || extractUrl(p.get('text')) || extractUrl(p.get('title'));
+  history.replaceState(null, '', location.pathname + location.hash);
+  if (url) openQuoteFromUrl(url);
+})();
 if (!state.rates || Date.now() - (state.rates.fetchedAt || 0) > 6 * 3600_000) refreshRates({ quiet: true });
 lastAutoSync = Date.now();
 doSync({ quiet: true });
