@@ -1,0 +1,10 @@
+{
+  "name": "pricebook",
+  "private": true,
+  "type": "module",
+  "description": "格價簿 PriceBook — personal price-comparison PWA for Hong Kong, the UK and Europe",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "start": "npx --yes http-server -c-1 -p 8080 ."
+  }
+}

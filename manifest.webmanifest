@@ -1,0 +1,17 @@
+{
+  "name": "格價簿 PriceBook",
+  "short_name": "格價簿",
+  "description": "香港、英國、歐洲購物前格價 — Compare prices across Hong Kong, the UK and Europe.",
+  "lang": "zh-HK",
+  "start_url": "./#/search",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#EDF0F2",
+  "theme_color": "#EDF0F2",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
