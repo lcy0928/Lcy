@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { wordsOf, basketMatch } from '../js/prices.js';
-import { BASKET, searchWords, robotsAllows, perUnit, pageProducts, pickCheapest } from '../scripts/morrisons-build.mjs';
+import { BASKET, searchWords, robotsAllows, perUnit, pageProducts, pickCheapest, planRun, mergeRows } from '../scripts/morrisons-build.mjs';
 import { G } from '../js/glossary.js';
 
 test('words: plurals fold to the singular', () => {
@@ -130,4 +130,37 @@ test('app: the basket item for a search term', () => {
   assert.equal(basketMatch(db, 'apple'), null);
   assert.equal(basketMatch(db, '橙汁'), null);
   assert.equal(basketMatch(null, 'milk'), null);
+});
+
+test('runs: an even share of what is left before the deadline', () => {
+  const basket = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'];
+  const today = '2026-10-02';
+  const now = Date.parse('2026-10-02T10:07:00Z');
+  const until = Date.parse('2026-10-02T16:00:00Z');
+  // 10 items, 12 runs left (every 30 min) → 1 per run.
+  assert.deepEqual(planRun(null, { today, now, until, everyMin: 30, basket }), ['a']);
+  // Late in the day the share grows; checked items are skipped.
+  const prev = { items: [['a', 'A', 1, 0, '', 'u', today], ['b', 'B', 1, 0, '', 'u', '2026-10-01']], missing: [['c', today]] };
+  const late = Date.parse('2026-10-02T15:07:00Z');
+  assert.deepEqual(planRun(prev, { today, now: late, until, everyMin: 30, basket }), ['b', 'd', 'e', 'f']);
+  // After the deadline nothing is checked; without one, everything left.
+  assert.deepEqual(planRun(prev, { today, now: until, until, everyMin: 30, basket }), []);
+  assert.deepEqual(planRun(prev, { today, basket }).length, 8);
+});
+
+test('runs: new results over the previous file', () => {
+  const basket = ['milk', 'eggs', 'bread'];
+  const prev = { items: [['bread', 'Old Bread', 1, 0, '', 'u', '2026-10-01'], ['milk', 'Old Milk', 2, 0, '', 'u', '2026-10-01']], missing: [['eggs', '2026-10-01']] };
+  const out = mergeRows(prev, [['milk', 'New Milk', 1.5, 0.66, 'l', 'u', '2026-10-02'], ['eggs', 'Eggs 6', 1.8, 0, '', 'u', '2026-10-02']], [['bread', '2026-10-02']], basket);
+  assert.deepEqual(out.items.map((r) => r[1]), ['New Milk', 'Eggs 6', 'Old Bread']);
+  assert.equal(out.date, '2026-10-02');
+  assert.deepEqual(out.missing, [['bread', '2026-10-02']]);
+  // The bread price from yesterday stays, but counts as checked today.
+  assert.deepEqual(planRun(out, { today: '2026-10-02', basket }), []);
+  assert.equal(mergeRows(null, [], [], basket).items.length, 0);
+});
+
+test('app: the date each basket item was checked', () => {
+  const db = { date: '2026-10-02', items: [['milk', 'Milk', 1, 0, '', 'u', '2026-10-01']] };
+  assert.equal(basketMatch(db, 'milk').date, '2026-10-01');
 });

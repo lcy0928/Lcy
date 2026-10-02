@@ -5,10 +5,14 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
-  # Daily refresh of the price data (Consumer Council, Netherlands, Austria, ONS, Morrisons) at 10:23 Hong Kong time.
+  # Daily refresh of the price data (Consumer Council, Netherlands, Austria, ONS) at 10:23 Hong Kong time;
+  # the Morrisons prices checked on 2 October are carried over.
   # GitHub pauses schedules after 60 days without repository activity; re-enable under Actions if so.
   schedule:
     - cron: '23 2 * * *'
+    # 2 October 2026 only: the Morrisons basket spread over the day, done before 5pm UK time
+    # (these runs reuse the other data from the live site instead of downloading it again).
+    - cron: '7,37 10-15 2 10 *'
 
 permissions:
   contents: read
@@ -31,7 +35,7 @@ jobs:
       - name: Check the ONS price data still parses (informational)
         continue-on-error: true
         run: node scripts/ons-build.mjs "$RUNNER_TEMP/ons.json"
-      - name: Check Morrisons prices can still be read (informational, 3 items)
+      - name: Check Morrisons prices can still be read (informational, 1 item)
         continue-on-error: true
         run: node scripts/morrisons-build.mjs "$RUNNER_TEMP/morrisons.json" --check
 
@@ -52,11 +56,22 @@ jobs:
           mkdir _site
           cp -r index.html manifest.webmanifest sw.js css js icons _site/
           touch _site/.nojekyll
+      - name: Reuse today's data from the live site (Morrisons-only runs)
+        id: reuse
+        if: github.event.schedule == '7,37 10-15 2 10 *'
+        continue-on-error: true
+        run: |
+          mkdir -p _site/data
+          for f in opw nl nl-old at at-old ons; do
+            curl -sSfL --retry 2 -o "_site/data/$f.json" "https://lcy0928.github.io/Lcy/data/$f.json"
+          done
       - name: Fetch Consumer Council prices
+        if: steps.reuse.outcome != 'success'
         # A failed download must not block the deploy; the app hides the panel without data.
         continue-on-error: true
         run: node scripts/opw-build.mjs _site/data/opw.json
       - name: Fetch Dutch supermarket prices (checkjebon.nl)
+        if: steps.reuse.outcome != 'success'
         # Trees only: the build reads a few older snapshots to see which stores stopped updating.
         continue-on-error: true
         run: |
@@ -64,6 +79,7 @@ jobs:
           mkdir -p _site/data
           node --max-old-space-size=4096 scripts/market-build.mjs nl _site/data/nl.json "$RUNNER_TEMP/checkjebon"
       - name: Fetch Austrian supermarket prices (Heisse Preise)
+        if: steps.reuse.outcome != 'success'
         continue-on-error: true
         run: |
           curl -sSfL --retry 3 -o "$RUNNER_TEMP/hp.tar.gz" https://github.com/falknerdominik/heisse-preise-data/releases/latest/download/latest-canonical.tar.gz
@@ -71,11 +87,15 @@ jobs:
           mkdir -p _site/data
           node --max-old-space-size=4096 scripts/market-build.mjs at _site/data/at.json "$RUNNER_TEMP/latest-canonical.json"
       - name: Fetch UK typical prices (ONS price quotes, monthly)
+        if: steps.reuse.outcome != 'success'
         continue-on-error: true
         run: node scripts/ons-build.mjs _site/data/ons.json
-      - name: Fetch Morrisons prices (50 everyday items, daily)
+      - name: Fetch Morrisons prices (50 everyday items, spread over 2 October; later runs keep them)
         continue-on-error: true
-        run: node scripts/morrisons-build.mjs _site/data/morrisons.json
+        run: >-
+          node scripts/morrisons-build.mjs _site/data/morrisons.json
+          --prev https://lcy0928.github.io/Lcy/data/morrisons.json
+          --until 2026-10-02T16:00:00Z --every 30
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -636,8 +636,8 @@ function dataPrice(site, pc) {
     const x = basketMatch(basket, termFor('en'));
     if (x) {
       return {
-        price: x.price, cur: 'GBP', name: x.name, url: x.url, src: 'Morrisons', date: basket.date,
-        stale: ageDays(basket.date) > 3, unit: x.per ? `${fmt(x.unit, 'GBP', lang)}/${t('mkt.per.' + x.per)}` : '',
+        price: x.price, cur: 'GBP', name: x.name, url: x.url, src: 'Morrisons', date: x.date || basket.date,
+        stale: ageDays(x.date || basket.date) > 3, unit: x.per ? `${fmt(x.unit, 'GBP', lang)}/${t('mkt.per.' + x.per)}` : '',
       };
     }
   }

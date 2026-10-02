@@ -124,7 +124,7 @@ export function wordsOf(text) {
  * The daily basket item for an (English) search term: every word of the item is in
  * the term, most words wins ("orange juice" over "oranges"), then the one ending
  * like the term ("milk chocolate" → chocolate).
- * db = { date, items: [[item ('a|b' for aliases), name, price, unit price, per, url]] }
+ * db = { date, items: [[item ('a|b' for aliases), name, price, unit price, per, url, date checked]] }
  */
 export function basketMatch(db, term) {
   const t = wordsOf(term);
@@ -139,8 +139,8 @@ export function basketMatch(db, term) {
     }
   }
   if (!best) return null;
-  const [, name, price, unit, per, url] = best.row;
-  return { name, price, unit, per, url };
+  const [, name, price, unit, per, url, date] = best.row;
+  return { name, price, unit, per, url, date };
 }
 
 /** Your latest logged price for this site, from the watchlist items that match the search. */
