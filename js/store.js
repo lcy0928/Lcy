@@ -164,10 +164,25 @@ export function upsertQuote(itemId, quote) {
   const now = Date.now();
   const existing = quote.id && item.quotes.find((q) => q.id === quote.id);
   if (existing) Object.assign(existing, quote, { updatedAt: now });
-  else item.quotes.push({ date: localDate(), ...quote, id: uid(), createdAt: now, updatedAt: now });
+  else item.quotes.push({ date: localDate(), ...quote, id: quote.id || uid(), createdAt: now, updatedAt: now });
   item.updatedAt = now;
   save({ synced: true });
   return item;
+}
+
+/** Add many quotes and mark others as seen on `date`, with a single save. */
+export function applyQuoteUpdates(itemId, add, seenIds, date, extra = {}) {
+  const item = getItem(itemId);
+  if (!item) return;
+  const now = Date.now();
+  for (const q of add) {
+    if (!item.quotes.some((x) => x.id === q.id)) item.quotes.push({ ...q, createdAt: now, updatedAt: now });
+  }
+  for (const q of item.quotes) {
+    if (seenIds.includes(q.id)) Object.assign(q, { seenAt: date, updatedAt: now });
+  }
+  Object.assign(item, extra, { updatedAt: now });
+  save({ synced: true });
 }
 
 export function deleteQuote(itemId, quoteId) {

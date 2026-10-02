@@ -8,6 +8,7 @@ import { syncGist, mergeData } from './sync.js';
 import { buildChart, bindChart } from './chart.js';
 import { esc, num, uid, localDate, addDays, safeUrl } from './util.js';
 import { detectFromUrl, extractUrl, nameFromUrl } from './detect.js';
+import { expandOpw, searchOpw, opwQuotes, opwUpdates, productName, opwProductUrl, storeName } from './opw.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -17,6 +18,7 @@ const dlg = $('#dlg');
 // View-only UI state (not persisted)
 const ui = { listCat: 'all', showAll: false, sortUnit: false, siteCat: 'all', conv: { amt: '100', cur: 'GBP' }, chart: null, dialog: null };
 let installPrompt = null;
+let opw = null; // Consumer Council data, loaded from data/opw.json
 
 const ctx = () => ({
   base: state.settings.base,
@@ -186,11 +188,67 @@ function searchResults() {
   const groups = REGIONS.filter((r) => s.regions.includes(r))
     .map((r) => [r, sites.filter((x) => x.region === r)])
     .filter(([, l]) => l.length);
-  return `<p class="hint">${t('search.hint')}</p>${groups.map(([r, list]) => `
+  return `${opwPanel()}<p class="hint">${t('search.hint')}</p>${groups.map(([r, list]) => `
     <section class="region">
       <h2 class="region-h"><span>${t('region.' + r)}</span><small>${t('search.count', { n: list.length })}</small></h2>
       <ul class="sites">${list.map((site) => siteRow(site, params)).join('')}</ul>
     </section>`).join('')}`;
+}
+
+function opwPanel() {
+  const s = state.search;
+  if (s.cat !== 'grocery' || !opw || !s.q.trim() || !s.regions.includes('HK')) return '';
+  const lang = getLang();
+  const hits = searchOpw(opw, s.q, 8);
+  const rows = hits.map((p) => {
+    const cheapest = p.prices[0];
+    const table = p.prices.map((x) => {
+      const offer = p.offers.filter((o) => o.store === x.store).map((o) => (lang === 'en' ? o.en : o.zh)).join('; ');
+      return `<tr><th>${esc(storeName(x.store))}${offer ? `<span class="opw-offer">${esc(offer)}</span>` : ''}</th><td>${esc(fmt(x.price, 'HKD', lang))}</td></tr>`;
+    }).join('');
+    return `<li class="opw-item">
+      <div class="opw-head">
+        <div class="opw-name">${esc(productName(p, lang))}</div>
+        <div class="opw-best"><span class="mini-tag">${esc(fmt(cheapest.price, 'HKD', lang))}</span><span class="meta">${esc(storeName(cheapest.store))}</span></div>
+      </div>
+      <details class="q-details"><summary>${t('opw.stores', { n: p.prices.length })}</summary><table class="breakdown">${table}</table></details>
+      <div class="opw-actions">
+        <button type="button" class="btn small" data-act="opw-track" data-code="${esc(p.code)}">${t('search.track')}</button>
+        <a class="btn small quiet" href="${esc(opwProductUrl(p.code))}" target="_blank" rel="noopener noreferrer">${t('opw.page')} ↗</a>
+      </div>
+    </li>`;
+  }).join('');
+  return `<section class="card opw">
+    <h2 class="section-h">${t('opw.title')} <small>${esc(t('opw.updated', { date: fmtDate(opw.date) }))}</small></h2>
+    ${hits.length ? `<ul class="opw-list">${rows}</ul>` : `<p class="muted small">${esc(t('opw.none', { q: s.q.trim() }))}</p>`}
+    <p class="muted small">${t('opw.note')}</p>
+  </section>`;
+}
+
+// Keep tracked Consumer Council items in step with today's data.
+function applyOpwUpdates() {
+  if (!opw) return;
+  for (const item of S.liveItems()) {
+    if (!item.opw || item.opwDate === opw.date) continue;
+    const p = opw.byCode.get(item.opw);
+    if (!p) continue;
+    const { add, seen } = opwUpdates(item, p, opw.date, getLang());
+    S.applyQuoteUpdates(item.id, add, seen, opw.date, { opwDate: opw.date });
+  }
+}
+
+async function loadOpw() {
+  try {
+    const res = await fetch('data/opw.json', { cache: 'no-cache' });
+    if (!res.ok) return;
+    opw = expandOpw(await res.json());
+    applyOpwUpdates();
+    const r = route().name;
+    if (r === 'search' && state.search.cat === 'grocery' && $('#results')) $('#results').innerHTML = searchResults();
+    else if (r === 'item' || r === 'list') softRender();
+  } catch {
+    /* offline or not deployed yet: the panel just stays hidden */
+  }
 }
 
 function siteRow(site, params) {
@@ -275,7 +333,7 @@ function priceTag(best, item, c, second) {
       : `<span>${t('item.aboveTarget', { amt: esc(money(best.r.total - target)) })}</span>`);
   }
   if (second) notes.push(`<span>${t('item.cheaperBy', { amt: esc(money(second.r.total - best.r.total)) })}</span>`);
-  if (isStale(best.q)) notes.push(`<span class="warn-text">${t('item.staleBest', { n: ageDays(best.q.date) })}</span>`);
+  if (isStale(best.q)) notes.push(`<span class="warn-text">${t('item.staleBest', { n: ageDays(seenDate(best.q)) })}</span>`);
   return `<div class="tag-wrap">
     <div class="price-tag">
       <span class="tag-label">${t('list.best')}</span>
@@ -291,12 +349,14 @@ function breakdown(r, withTotal = true) {
     ${withTotal ? `<tr class="total"><th>${t('line.total')}</th><td>${esc(money(r.total))}</td></tr>` : ''}</table>`;
 }
 
+const seenDate = (q) => (q.seenAt && q.seenAt > (q.date || '') ? q.seenAt : q.date);
+
 function ageLabel(date) {
   const n = ageDays(date);
   if (!Number.isFinite(n) || n < 0) return '';
   return n === 0 ? t('age.today') : t('age.days', { n });
 }
-const isStale = (q) => ageDays(q.date) > num(state.settings.staleDays, 7);
+const isStale = (q) => ageDays(seenDate(q)) > num(state.settings.staleDays, 7);
 
 function unitLabel(q, total) {
   const u = unitPrice(total, q.qty, q.unit);
@@ -317,7 +377,7 @@ function quoteRow({ q, r }, i, { scratch = false, itemId = '', cheapest = NaN } 
         ${q.region ? `<span class="badge">${t('region.' + q.region)}</span>` : ''}
         ${q.cond === 'used' ? `<span class="badge kind-used">${t('cond.used')}</span>` : ''}
         ${stale ? `<span class="badge stale-badge">${t('age.stale')}</span>` : ''}</div>
-      <div class="q-sub">${esc(fmtDate(q.date))}${scratch ? '' : ` (${esc(ageLabel(q.date))})`} · ${esc(fmt(num(q.price), q.currency, getLang()))}${mode}${q.note ? ` · ${esc(q.note)}` : ''}</div>
+      <div class="q-sub">${esc(fmtDate(q.date))}${scratch ? '' : ` (${esc(ageLabel(seenDate(q)))})`} · ${esc(fmt(num(q.price), q.currency, getLang()))}${mode}${q.note ? ` · ${esc(q.note)}` : ''}</div>
       ${unit ? `<div class="q-unit">${esc(unit)}</div>` : ''}
       <details class="q-details"><summary>${t('item.breakdown')}</summary>${breakdown(r)}</details>
     </div>
@@ -962,6 +1022,16 @@ const actions = {
     if (!missing.length) preset.url = url;
     openQuote({ preset, itemName: searchItemName() });
   },
+  'opw-track'(el) {
+    const p = opw?.byCode.get(el.dataset.code);
+    if (!p) return;
+    const name = productName(p, getLang());
+    const existing = S.liveItems().find((i) => i.opw === p.code);
+    const item = existing || S.addItem({ name, cat: 'grocery' });
+    S.applyQuoteUpdates(item.id, opwQuotes(p, opw.date, getLang()), [], opw.date, { opw: p.code, opwDate: opw.date });
+    toast(t('search.tracked'));
+    location.hash = `#/item/${encodeURIComponent(item.id)}`;
+  },
   'item-add'() { openItemDialog(null); },
   'item-edit'(el) { openItemDialog(S.getItem(el.dataset.item)); },
   'item-delete'(el) {
@@ -1261,7 +1331,7 @@ render();
 })();
 if (!state.rates || Date.now() - (state.rates.fetchedAt || 0) > 6 * 3600_000) refreshRates({ quiet: true });
 lastAutoSync = Date.now();
-doSync({ quiet: true });
+doSync({ quiet: true }).then(loadOpw);
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('./sw.js').catch(() => {});

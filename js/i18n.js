@@ -47,6 +47,9 @@ const zh = {
   'item.staleBest': '呢個價係 {n} 日前記嘅，可能已經變咗',
   'set.staleDays': '幾多日當舊價', 'set.fwd': '集運收費',
   'set.fwdHint': 'Buy&Ship 英國倉 2026 年約 HK$24/lb，另加 HK$1/lb 燃油附加費（≈ HK$55/kg）。請按你用開嘅集運公司修改；留空就唔會自動填。',
+  'opw.title': '消委會網上價格一覽通', 'opw.updated': '{date} 更新', 'opw.stores': '{n} 間超市價錢',
+  'opw.page': '消委會頁面', 'opw.none': '消委會資料入面搵唔到「{q}」，可以試吓用品牌或者中英文名搜尋。',
+  'opw.note': '超市標價，唔包會員價同埋優惠計算。資料來源：消費者委員會（data.gov.hk），每日自動更新；加入心水之後價錢會自動更新。',
   'quote.card': '付款卡', 'quote.overseas': '海外商戶（用港幣付款都會收跨境費）',
 
   'list.title': '心水清單',
@@ -226,6 +229,9 @@ const en = {
   'item.staleBest': 'Logged {n} days ago — it may have changed',
   'set.staleDays': 'Days before a price is old', 'set.fwd': 'Forwarding rates',
   'set.fwdHint': 'Buy&Ship’s UK warehouse charged about HK$24/lb plus a HK$1/lb fuel surcharge in 2026 (≈ HK$55/kg). Change these to your forwarder’s rates; leave blank to skip.',
+  'opw.title': 'Consumer Council Online Price Watch', 'opw.updated': 'updated {date}', 'opw.stores': 'Prices at {n} supermarkets',
+  'opw.page': 'Consumer Council page', 'opw.none': 'No Consumer Council products match “{q}”. Try a brand, or the Chinese or English name.',
+  'opw.note': 'Shelf prices, excluding member prices and multi-buy offers. Source: Consumer Council (data.gov.hk), refreshed daily; tracked items update automatically.',
   'quote.card': 'Pay with', 'quote.overseas': 'Overseas merchant (cross-border fee applies even in HKD)',
 
   'list.title': 'Watchlist',
